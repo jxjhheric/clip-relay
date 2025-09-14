@@ -1,0 +1,28 @@
+# Docker-related files
+Dockerfile
+.dockerignore
+
+# Documentation
+README.md
+
+# Environment variables
+.env
+
+# Dependencies
+node_modules
+
+# Build artifacts
+.next
+npm-debug.log
+*.tsbuildinfo
+
+# Database files - should be mounted as a volume
+db/
+prisma/db/
+
+# Git
+.git
+.gitignore
+
+# VSCode
+.vscode
