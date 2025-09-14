@@ -25,5 +25,8 @@ jobs:
         with:
           context: .
           push: true
-          # The tag should match the format your registry expects
-          tags: ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/cloud-clipboard:latest
+          # The tags should match the format your registry expects
+          # We push both a unique tag based on the commit SHA and the :latest tag
+          tags: |
+            ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/cloud-clipboard:${{ github.sha }}
+            ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/cloud-clipboard:latest

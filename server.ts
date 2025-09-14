@@ -1,5 +1,5 @@
 // server.ts - Next.js Standalone + Socket.IO
-import { setupSocket, setIO, getIO } from '@/lib/socket';
+import { setupSocket, setIO, getIO } from './src/lib/socket';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import next from 'next';
