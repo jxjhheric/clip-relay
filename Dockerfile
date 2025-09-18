@@ -17,6 +17,7 @@ FROM deps AS builder
 
 COPY . .
 
+RUN npm run db:generate
 RUN npm run build
 
 # Remove development-only dependencies and caches
