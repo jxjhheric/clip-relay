@@ -76,7 +76,7 @@ server.ts            # Custom Next.js + Socket.IO server entry point
 - Uploaded files are stored base64-encoded in SQLite. For large deployments consider swapping to object storage or streaming uploads.
 
 ## License
-This project began from a Z.ai scaffold and has since been adapted for the Cloud Clipboard use case. Update this section with your preferred license if you plan to distribute the code.
+This project began from a Z.ai scaffold and has since been adapted for the Cloud Clipboard use case.
 
 
 
