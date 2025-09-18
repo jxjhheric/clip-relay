@@ -10,7 +10,7 @@ RUN apk add --no-cache openssl
 FROM base AS deps
 
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --include=dev
 
 # ---- Builder Stage ----
 FROM deps AS builder
