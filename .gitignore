@@ -47,3 +47,14 @@ test
 prompt
 
 server.log
+# sqlite databases
+/db/*.db
+/db/*.sqlite
+/db/*.sqlite3
+/db/*.db-wal
+/db/*.db-shm
+/prisma/db/*.db
+/prisma/db/*.sqlite
+!/db/.gitkeep
+
+

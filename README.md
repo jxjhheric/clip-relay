@@ -1,141 +1,85 @@
-# 🚀 Welcome to Z.ai Code Scaffold
+# Cloud Clipboard
 
-A modern, production-ready web application scaffold powered by cutting-edge technologies, designed to accelerate your development with [Z.ai](https://chat.z.ai)'s AI-powered coding assistance.
+A self-hosted cloud clipboard for quickly sharing text snippets, files, and images across devices. The app is built with Next.js and provides realtime updates, drag-and-drop uploads, and lightweight authentication suitable for personal or small-team use.
 
-## ✨ Technology Stack
+## Features
+- Realtime clipboard synchronization via Socket.IO and Prisma
+- Upload text, files, and pasted images with progress feedback
+- Drag-and-drop reordering powered by `@dnd-kit`
+- Full-text search across clipboard content and filenames
+- Optional password gate stored in sessionStorage
+- Responsive UI built from shadcn/ui components and Tailwind CSS 4
 
-This scaffold provides a robust foundation built with:
+## Architecture Overview
+- **Frontend**: Next.js App Router (React 19) with shadcn/ui component primitives and Tailwind CSS 4 for styling (`src/app`, `src/components/ui`)
+- **Server**: Custom Node entry (`server.ts`) bootstraps Next.js and attaches a Socket.IO server for realtime events
+- **Data**: SQLite managed through Prisma (`prisma/schema.prisma`, `src/lib/db.ts`)
+- **Auth**: Minimal bearer password check handled in `src/app/api/auth/verify/route.ts`
+- **Realtime**: Websocket events broadcast create/delete actions (`src/lib/socket.ts`, `src/lib/socket-events.ts`)
 
-### 🎯 Core Framework
-- **⚡ Next.js 15** - The React framework for production with App Router
-- **📘 TypeScript 5** - Type-safe JavaScript for better developer experience
-- **🎨 Tailwind CSS 4** - Utility-first CSS framework for rapid UI development
+## Getting Started
+### Prerequisites
+- Node.js 20+
+- npm 10+
 
-### 🧩 UI Components & Styling
-- **🧩 shadcn/ui** - High-quality, accessible components built on Radix UI
-- **🎯 Lucide React** - Beautiful & consistent icon library
-- **🌈 Framer Motion** - Production-ready motion library for React
-- **🎨 Next Themes** - Perfect dark mode in 2 lines of code
-
-### 📋 Forms & Validation
-- **🎣 React Hook Form** - Performant forms with easy validation
-- **✅ Zod** - TypeScript-first schema validation
-
-### 🔄 State Management & Data Fetching
-- **🐻 Zustand** - Simple, scalable state management
-- **🔄 TanStack Query** - Powerful data synchronization for React
-- **🌐 Axios** - Promise-based HTTP client
-
-### 🗄️ Database & Backend
-- **🗄️ Prisma** - Next-generation Node.js and TypeScript ORM
-- **🔐 NextAuth.js** - Complete open-source authentication solution
-
-### 🎨 Advanced UI Features
-- **📊 TanStack Table** - Headless UI for building tables and datagrids
-- **🖱️ DND Kit** - Modern drag and drop toolkit for React
-- **📊 Recharts** - Redefined chart library built with React and D3
-- **🖼️ Sharp** - High performance image processing
-
-### 🌍 Internationalization & Utilities
-- **🌍 Next Intl** - Internationalization library for Next.js
-- **📅 Date-fns** - Modern JavaScript date utility library
-- **🪝 ReactUse** - Collection of essential React hooks for modern development
-
-## 🎯 Why This Scaffold?
-
-- **🏎️ Fast Development** - Pre-configured tooling and best practices
-- **🎨 Beautiful UI** - Complete shadcn/ui component library with advanced interactions
-- **🔒 Type Safety** - Full TypeScript configuration with Zod validation
-- **📱 Responsive** - Mobile-first design principles with smooth animations
-- **🗄️ Database Ready** - Prisma ORM configured for rapid backend development
-- **🔐 Auth Included** - NextAuth.js for secure authentication flows
-- **📊 Data Visualization** - Charts, tables, and drag-and-drop functionality
-- **🌍 i18n Ready** - Multi-language support with Next Intl
-- **🚀 Production Ready** - Optimized build and deployment settings
-- **🤖 AI-Friendly** - Structured codebase perfect for AI assistance
-
-## 🚀 Quick Start
-
+### Install dependencies
 ```bash
-# Install dependencies
-npm install
+npm ci
+```
+> Use `npm ci` to keep dependency versions aligned with `package-lock.json`. This avoids accidental upgrades that can break the Tailwind/PostCSS toolchain.
 
-# Start development server
+### Development
+```bash
 npm run dev
+```
+The server uses `nodemon` + `tsx` to reload `server.ts`. The Next.js dev build is served on [http://localhost:3000](http://localhost:3000).
 
-# Build for production
+### Production build
+```bash
 npm run build
-
-# Start production server
 npm start
 ```
+`npm start` runs `prisma db push` before launching the custom server in production mode.
 
-Open [http://localhost:3000](http://localhost:3000) to see your application running.
+## Environment Variables
+Create a `.env` file based on the included example:
 
-## 🤖 Powered by Z.ai
+```
+DATABASE_URL="file:../db/custom.db"
+CLIPBOARD_PASSWORD="change-me"
+```
+- `DATABASE_URL` points Prisma to the SQLite database file. Relative paths are resolved from `prisma/schema.prisma`, so `file:../db/custom.db` maps to `db/custom.db` in the project root (and `/app/db/custom.db` inside Docker).
+- `CLIPBOARD_PASSWORD` controls access to the UI; users must enter the password once per session.
 
-This scaffold is optimized for use with [Z.ai](https://chat.z.ai) - your AI assistant for:
+## Docker
+A multi-stage Dockerfile is provided. To build locally:
+```bash
+docker build -t cloud-clipboard .
+```
+Consider trimming dependencies (`npm prune --omit=dev`) or using Next.js standalone output if you need a smaller image.
 
-- **💻 Code Generation** - Generate components, pages, and features instantly
-- **🎨 UI Development** - Create beautiful interfaces with AI assistance  
-- **🔧 Bug Fixing** - Identify and resolve issues with intelligent suggestions
-- **📝 Documentation** - Auto-generate comprehensive documentation
-- **🚀 Optimization** - Performance improvements and best practices
-
-Ready to build something amazing? Start chatting with Z.ai at [chat.z.ai](https://chat.z.ai) and experience the future of AI-powered development!
-
-## 📁 Project Structure
-
+## Project Structure
 ```
 src/
-├── app/                 # Next.js App Router pages
-├── components/          # Reusable React components
-│   └── ui/             # shadcn/ui components
-├── hooks/              # Custom React hooks
-└── lib/                # Utility functions and configurations
+├─ app/              # App Router pages, API routes, layout, global styles
+├─ components/ui/    # Reusable shadcn/ui wrappers
+├─ hooks/            # Custom hooks (toast, mobile detection)
+└─ lib/              # Auth, DB, socket helpers, util functions
+prisma/              # Prisma schema and migrations
+server.ts            # Custom Next.js + Socket.IO server entry point
 ```
 
-## 🎨 Available Features & Components
+## Maintenance Notes
+- Some dependencies were inherited from the original scaffold. Periodically audit `package.json` to remove unused packages before building production images.
+- The repo includes `db/.gitkeep` so the database directory exists without committing SQLite files. Real database files under `db/` or `prisma/db/` are ignored by git.
+- Tailwind CSS 4 tooling is sensitive to version drift; if you regenerate the lockfile, pin `tailwindcss` and `@tailwindcss/postcss` to the tested versions (currently `4.1.12`).
+- Uploaded files are stored base64-encoded in SQLite. For large deployments consider swapping to object storage or streaming uploads.
 
-This scaffold includes a comprehensive set of modern web development tools:
+## License
+This project began from a Z.ai scaffold and has since been adapted for the Cloud Clipboard use case. Update this section with your preferred license if you plan to distribute the code.
 
-### 🧩 UI Components (shadcn/ui)
-- **Layout**: Card, Separator, Aspect Ratio, Resizable Panels
-- **Forms**: Input, Textarea, Select, Checkbox, Radio Group, Switch
-- **Feedback**: Alert, Toast (Sonner), Progress, Skeleton
-- **Navigation**: Breadcrumb, Menubar, Navigation Menu, Pagination
-- **Overlay**: Dialog, Sheet, Popover, Tooltip, Hover Card
-- **Data Display**: Badge, Avatar, Calendar
 
-### 📊 Advanced Data Features
-- **Tables**: Powerful data tables with sorting, filtering, pagination (TanStack Table)
-- **Charts**: Beautiful visualizations with Recharts
-- **Forms**: Type-safe forms with React Hook Form + Zod validation
 
-### 🎨 Interactive Features
-- **Animations**: Smooth micro-interactions with Framer Motion
-- **Drag & Drop**: Modern drag-and-drop functionality with DND Kit
-- **Theme Switching**: Built-in dark/light mode support
 
-### 🔐 Backend Integration
-- **Authentication**: Ready-to-use auth flows with NextAuth.js
-- **Database**: Type-safe database operations with Prisma
-- **API Client**: HTTP requests with Axios + TanStack Query
-- **State Management**: Simple and scalable with Zustand
 
-### 🌍 Production Features
-- **Internationalization**: Multi-language support with Next Intl
-- **Image Optimization**: Automatic image processing with Sharp
-- **Type Safety**: End-to-end TypeScript with Zod validation
-- **Essential Hooks**: 100+ useful React hooks with ReactUse for common patterns
 
-## 🤝 Get Started with Z.ai
-
-1. **Clone this scaffold** to jumpstart your project
-2. **Visit [chat.z.ai](https://chat.z.ai)** to access your AI coding assistant
-3. **Start building** with intelligent code generation and assistance
-4. **Deploy with confidence** using the production-ready setup
-
----
-
-Built with ❤️ for the developer community. Supercharged by [Z.ai](https://chat.z.ai) 🚀

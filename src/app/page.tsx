@@ -10,9 +10,11 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Search, Plus, Copy, Trash2, FileText, Image, File } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { authFetch, verifyPassword, clearPassword } from '@/lib/auth';
+import { authFetch, verifyPassword, clearPassword, getAuthHeaders } from '@/lib/auth';
+import axios from 'axios';
 import { io } from 'socket.io-client';
 import { CLIPBOARD_CREATED_EVENT, CLIPBOARD_DELETED_EVENT } from '@/lib/socket-events';
 
@@ -676,6 +678,8 @@ function AddItemDialog({ onItemAdded }: { onItemAdded: () => void }) {
   const [content, setContent] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const { toast } = useToast();
 
   const handleFileSelect = (selectedFile: File) => {
@@ -726,81 +730,87 @@ function AddItemDialog({ onItemAdded }: { onItemAdded: () => void }) {
     } catch {}
   };
 
-  const readFileAsBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  };
-
   const handleSubmit = async () => {
-    try {
-      if (!content.trim() && !file) {
-        toast({
-          title: "请输入内容或上传文件",
-          description: "内容和文件不能同时为空",
-          variant: "destructive",
-        });
-        return;
-      }
+    if (!content.trim() && !file) {
+      toast({
+        title: "请输入内容或上传文件",
+        description: "内容和文件不能同时为空",
+        variant: "destructive",
+      });
+      return;
+    }
 
-      let fileData: string | undefined;
-      let fileName: string | undefined;
-      let fileSize: number | undefined;
+    setUploadProgress(0);
+    abortControllerRef.current = new AbortController();
+
+    try {
+      const formData = new FormData();
+      formData.append('content', content);
+
       let itemType: 'TEXT' | 'IMAGE' | 'FILE' = 'TEXT';
 
       if (file) {
-        fileData = await readFileAsBase64(file);
-        fileName = file.name;
-        fileSize = file.size;
         itemType = file.type.startsWith('image/') ? 'IMAGE' : 'FILE';
+        formData.append('file', file);
       }
+      formData.append('type', itemType);
 
-      // 调用API创建新条目
-      const response = await authFetch('/api/clipboard', {
-        method: 'POST',
+      const response = await axios.post('/api/clipboard', formData, {
         headers: {
-          'Content-Type': 'application/json',
+          ...(getAuthHeaders() as Record<string, string>),
+          'Content-Type': 'multipart/form-data',
         },
-        body: JSON.stringify({
-          type: itemType,
-          content: content,
-          fileName,
-          fileSize,
-          fileData,
-        }),
+        signal: abortControllerRef.current.signal,
+        onUploadProgress: (progressEvent) => {
+          const total = progressEvent.total ?? progressEvent.loaded;
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / total);
+          setUploadProgress(percentCompleted);
+        },
       });
 
-      if (response.ok) {
-        const newItem = await response.json();
+      if (response.status === 201) {
         toast({
           title: "添加成功",
           description: "新条目已成功添加到剪贴板",
         });
         
-        // 重置表单
-        setContent('');
-        setFile(null);
+        resetForm();
         setOpen(false);
         onItemAdded();
       } else {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to create item');
+        throw new Error(response.data.error || 'Failed to create item');
       }
     } catch (error) {
-      toast({
-        title: "添加失败",
-        description: "文件处理失败，请重试",
-        variant: "destructive",
-      });
+      if (axios.isCancel(error)) {
+        toast({
+          title: "上传已取消",
+        });
+      } else {
+        toast({
+          title: "添加失败",
+          description: "文件处理失败，请重试",
+          variant: "destructive",
+        });
+      }
+    } finally {
+      setUploadProgress(null);
+      abortControllerRef.current = null;
     }
   };
 
   const resetForm = () => {
     setContent('');
     setFile(null);
+    setUploadProgress(null);
+    abortControllerRef.current = null;
+  };
+
+  const handleCancel = () => {
+    if (uploadProgress !== null) {
+      abortControllerRef.current?.abort();
+    } else {
+      setOpen(false);
+    }
   };
 
   return (
@@ -838,7 +848,7 @@ function AddItemDialog({ onItemAdded }: { onItemAdded: () => void }) {
           <div>
             <label className="text-sm font-medium mb-2 block">上传文件</label>
             <div
-              className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+              className={`cursor-pointer border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
                 isDragging
                   ? 'border-primary bg-primary/5'
                   : file
@@ -891,6 +901,15 @@ function AddItemDialog({ onItemAdded }: { onItemAdded: () => void }) {
                 </div>
               )}
             </div>
+             {/* 上传进度条 */}
+            {uploadProgress !== null && (
+              <div className="space-y-2">
+                <Progress value={uploadProgress} className="w-full" />
+                <p className="text-sm text-center text-muted-foreground">
+                  {uploadProgress < 100 ? `上传中... ${uploadProgress}%` : '处理中...'}
+                </p>
+              </div>
+            )}
           </div>
           
           {/* 底部操作按钮 - 固定位置 */}
@@ -898,11 +917,11 @@ function AddItemDialog({ onItemAdded }: { onItemAdded: () => void }) {
             <div className="text-xs text-muted-foreground">
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setOpen(false)}>
+              <Button variant="outline" onClick={handleCancel}>
                 取消
               </Button>
-              <Button onClick={handleSubmit}>
-                添加
+              <Button onClick={handleSubmit} disabled={uploadProgress !== null}>
+                {uploadProgress !== null ? '上传中...' : '添加'}
               </Button>
             </div>
           </div>

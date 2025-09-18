@@ -50,12 +50,25 @@ export async function GET(request: NextRequest) {
 // POST /api/clipboard - 创建新的剪贴板条目
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { type, content, fileName, fileSize, fileData } = body;
+    const formData = await request.formData();
+    const content = formData.get('content') as string;
+    const type = formData.get('type') as 'TEXT' | 'IMAGE' | 'FILE';
+    const file = formData.get('file') as File | null;
 
-    if (!content && !fileData) {
+    let fileData: string | undefined;
+    let fileName: string | undefined;
+    let fileSize: number | undefined;
+
+    if (file) {
+      const buffer = Buffer.from(await file.arrayBuffer());
+      fileData = `data:${file.type};base64,${buffer.toString('base64')}`;
+      fileName = file.name;
+      fileSize = file.size;
+    }
+
+    if (!content && !file) {
       return NextResponse.json(
-        { error: 'Content or file data is required' },
+        { error: 'Content or file is required' },
         { status: 400 }
       );
     }
@@ -67,7 +80,7 @@ export async function POST(request: NextRequest) {
         fileName,
         fileSize,
         fileData,
-      }
+      },
     });
 
     // WebSocket: 广播创建事件
