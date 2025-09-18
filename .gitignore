@@ -58,3 +58,4 @@ server.log
 !/db/.gitkeep
 
 
+dist/
