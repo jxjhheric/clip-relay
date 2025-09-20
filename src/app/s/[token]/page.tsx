@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default function Page({ params }: { params: { token: string } }) {
-  return <ShareClient token={params.token} />;
+export default async function Page({ params }: { params: Promise<{ token: string }> }) {
+  const { token } = await params;
+  return <ShareClient token={token} />;
 }
-

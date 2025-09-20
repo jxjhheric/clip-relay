@@ -693,7 +693,6 @@ function ShareManagerDialog({ open, onOpenChange }: { open: boolean; onOpenChang
 
   useEffect(() => {
     if (open) load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, includeRevoked, page]);
 
   const [hasMore, setHasMore] = useState(false);

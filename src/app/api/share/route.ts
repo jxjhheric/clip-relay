@@ -79,28 +79,12 @@ export async function GET(request: NextRequest) {
 
     const now = new Date();
 
-    // Build where filter
-    const where: any = { ...(itemId ? { itemId } : {}) };
-    if (!includeInvalid) {
-      where.revoked = false;
-      where.OR = [
-        { expiresAt: null },
-        { expiresAt: { gt: now } },
-      ];
-      where.AND = [
-        {
-          OR: [
-            { maxDownloads: null },
-            { maxDownloads: { gt: 0 }, downloadCount: { lt: { $ref: 'maxDownloads' } } },
-          ],
-        },
-      ];
-      // Note: Prisma 不支持在 where 中直接引用另一字段比较。
-      // 因此这里改用在结果中过滤。见下方 postFilter。
-    }
+    // Build base where and rely on postFilter for expired/exhausted logic
+    const baseWhere: any = { ...(itemId ? { itemId } : {}) };
+    const prismaWhere = includeInvalid ? baseWhere : { ...baseWhere, revoked: false };
 
     const sharesRaw = await db.shareLink.findMany({
-      where: includeInvalid ? where : (itemId ? { itemId, revoked: false } : { revoked: false }),
+      where: prismaWhere,
       orderBy: { createdAt: 'desc' },
       skip,
       take: pageSize + 1, // for hasMore
