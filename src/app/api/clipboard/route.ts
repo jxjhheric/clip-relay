@@ -9,57 +9,46 @@ import { randomUUID } from 'crypto';
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const search = searchParams.get('search');
-    
-    let items;
-    if (search) {
-      items = await db.clipboardItem.findMany({
-        where: {
-          OR: [
-            {
-              content: {
-               contains: search
-             }
-           },
-           {
-             fileName: {
-               contains: search
-             }
-           }
-          ]
-        },
-        select: {
-          id: true,
-          type: true,
-          content: true,
-          fileName: true,
-          fileSize: true,
-          createdAt: true,
-          updatedAt: true,
-          // 排除大字段 inlineData
-        },
-        orderBy: {
-          createdAt: 'desc'
-        }
-      });
-    } else {
-      items = await db.clipboardItem.findMany({
-        select: {
-          id: true,
-          type: true,
-          content: true,
-          fileName: true,
-          fileSize: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-        orderBy: {
-          createdAt: 'desc'
-        }
-      });
-    }
+    const search = searchParams.get('search') || undefined;
+    const take = Math.min(48, Math.max(1, parseInt(searchParams.get('take') || '24', 10)));
+    const cursorCreatedAt = searchParams.get('cursorCreatedAt');
+    const cursorId = searchParams.get('cursorId');
 
-    return NextResponse.json(items);
+    const andConds: any[] = [];
+    if (search) {
+      andConds.push({ OR: [ { content: { contains: search } }, { fileName: { contains: search } } ] });
+    }
+    if (cursorId && cursorCreatedAt) {
+      const cursorDate = new Date(cursorCreatedAt);
+      if (!isNaN(cursorDate.getTime())) {
+        andConds.push({ OR: [ { createdAt: { lt: cursorDate } }, { AND: [ { createdAt: cursorDate }, { id: { lt: cursorId } } ] } ] });
+      }
+    }
+    const where: any = andConds.length ? { AND: andConds } : {};
+
+    const rows = await db.clipboardItem.findMany({
+      where,
+      select: {
+        id: true,
+        type: true,
+        content: true,
+        fileName: true,
+        fileSize: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: [
+        { createdAt: 'desc' },
+        { id: 'desc' },
+      ],
+      take: take + 1,
+    });
+
+    const hasMore = rows.length > take;
+    const items = hasMore ? rows.slice(0, take) : rows;
+    const nextCursor = hasMore ? { id: rows[take].id, createdAt: rows[take].createdAt } : null;
+
+    return NextResponse.json({ items, nextCursor, hasMore });
   } catch (error) {
     console.error('Error fetching clipboard items:', error);
     return NextResponse.json(

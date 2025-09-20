@@ -8,6 +8,28 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Public share routes: allow unauthenticated access to read-only endpoints
+  if (pathname.startsWith('/api/share/')) {
+    const method = request.method.toUpperCase();
+    // allow GET /api/share/[token]
+    // allow POST /api/share/[token]/verify
+    // allow GET /api/share/[token]/file
+    // allow GET /api/share/[token]/download
+    const parts = pathname.split('/').filter(Boolean); // ['api','share',token,'...']
+    if (parts.length >= 3) {
+      const tail = parts.slice(3).join('/');
+      const last = parts[3] ?? '';
+      if (
+        (parts.length === 3 && method === 'GET') ||
+        (last === 'verify' && method === 'POST') ||
+        (last === 'file' && method === 'GET') ||
+        (last === 'download' && method === 'GET')
+      ) {
+        return NextResponse.next();
+      }
+    }
+  }
+
   // 仅对其他 API 路由进行认证
   if (pathname.startsWith('/api/')) {
     const authPassword = process.env.CLIPBOARD_PASSWORD;

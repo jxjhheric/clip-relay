@@ -25,6 +25,23 @@ model ClipboardItem {
   filePath    String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  shares      ShareLink[]
+}
+
+model ShareLink {
+  token         String   @id
+  itemId        String
+  item          ClipboardItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  expiresAt     DateTime?
+  maxDownloads  Int?
+  downloadCount Int      @default(0)
+  revoked       Boolean  @default(false)
+  passwordHash  String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([itemId])
 }
 
 enum ItemType {

@@ -8,8 +8,19 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Search, Plus, Copy, Trash2, FileText, Image as ImageIcon, File as FileIcon } from 'lucide-react';
+import { Search, Plus, Copy, Trash2, Share2, FileText, Image as ImageIcon, File as FileIcon } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { 
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
@@ -34,6 +45,9 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedItem, setSelectedItem] = useState<ClipboardItem | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
+  const [shareMgrOpen, setShareMgrOpen] = useState(false);
+  const [nextCursor, setNextCursor] = useState<{ id: string; createdAt: string } | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const { toast } = useToast();
 
   // 追踪最新的搜索关键字，供 WebSocket 事件回调使用
@@ -76,11 +90,16 @@ export default function Home() {
   const fetchItems = async (searchTerm = '') => {
     try {
       setIsLoading(true);
-      const url = searchTerm ? `/api/clipboard?search=${encodeURIComponent(searchTerm)}` : '/api/clipboard';
+      const params = new URLSearchParams();
+      params.set('take', '12');
+      if (searchTerm) params.set('search', searchTerm);
+      const url = `/api/clipboard?${params.toString()}`;
       const response = await authFetch(url);
       if (response.ok) {
         const data = await response.json();
-        setItems(data);
+        const list: ClipboardItem[] = Array.isArray(data) ? data : data.items;
+        setItems(list);
+        setNextCursor(data?.nextCursor ?? null);
       } else {
         toast({
           title: "获取数据失败",
@@ -101,7 +120,30 @@ export default function Home() {
 
   // 手动触发搜索
   const handleSearch = () => {
+    setNextCursor(null);
     fetchItems(searchTerm);
+  };
+
+  const loadMore = async () => {
+    if (!nextCursor) return;
+    try {
+      setLoadingMore(true);
+      const params = new URLSearchParams();
+      params.set('take', '24');
+      params.set('cursorCreatedAt', nextCursor.createdAt);
+      params.set('cursorId', nextCursor.id);
+      if (searchTermRef.current) params.set('search', searchTermRef.current);
+      const res = await authFetch(`/api/clipboard?${params.toString()}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || '加载失败');
+      const list: ClipboardItem[] = Array.isArray(data) ? data : data.items;
+      setItems(prev => [...prev, ...list]);
+      setNextCursor(data?.nextCursor ?? null);
+    } catch (e: any) {
+      toast({ title: '加载失败', description: e?.message || '请稍后重试', variant: 'destructive' });
+    } finally {
+      setLoadingMore(false);
+    }
   };
 
   // 打开详情：按需拉取详情（文件通过 /api/files/:id 流式获取）
@@ -294,7 +336,12 @@ export default function Home() {
                 <span className="hidden sm:inline">搜索</span>
               </Button>
             </div>
-            <AddItemDialog onItemAdded={() => fetchItems(searchTerm)} />
+            <div className="flex gap-2">
+              <AddItemDialog onItemAdded={() => fetchItems(searchTerm)} />
+              <Button variant="outline" onClick={() => setShareMgrOpen(true)}>
+                分享管理
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -335,6 +382,14 @@ export default function Home() {
             {!searchTerm && <AddItemDialog onItemAdded={() => fetchItems(searchTerm)} />}
           </div>
         )}
+
+        {items.length > 0 && nextCursor && (
+          <div className="flex justify-center mt-6">
+            <Button variant="outline" onClick={loadMore} disabled={loadingMore}>
+              {loadingMore ? '加载中...' : '加载更多'}
+            </Button>
+          </div>
+        )}
       </div>
       
       {/* 详情对话框 */}
@@ -347,11 +402,21 @@ export default function Home() {
           setSelectedItem(null);
         }}
       />
+
+      {/* 分享管理 */}
+      <ShareManagerDialog open={shareMgrOpen} onOpenChange={setShareMgrOpen} />
     </div>
   );
 }
 
 function SortableItem({ id, item, onSelectItem, onCopy, onDelete, getTypeIcon, formatFileSize, formatDate }: any) {
+  const { toast } = useToast();
+  const [shareOpen, setShareOpen] = useState(false);
+  const [creatingShare, setCreatingShare] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [expiresIn, setExpiresIn] = useState<string>('86400'); // 24h default
+  const [maxDownloads, setMaxDownloads] = useState<string>('');
+  const [sharePassword, setSharePassword] = useState<string>('');
   const {
     attributes,
     listeners,
@@ -404,11 +469,46 @@ function SortableItem({ id, item, onSelectItem, onCopy, onDelete, getTypeIcon, f
                 className="cursor-pointer"
                 onClick={(e) => {
                   e.stopPropagation();
-                  onDelete(item.id);
+                  setShareOpen(true);
                 }}
+                aria-label="分享"
+                title="分享"
               >
-                <Trash2 className="h-3 w-3" />
+                <Share2 className="h-3 w-3" />
               </Button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="cursor-pointer"
+                    onClick={(e) => e.stopPropagation()}
+                    aria-label="删除"
+                    title="删除"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>确认删除</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      删除后将无法恢复。确定要删除该条目吗？
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel onClick={(e) => e.stopPropagation()}>取消</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(item.id);
+                      }}
+                    >
+                      确认删除
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
           </div>
         </CardHeader>
@@ -437,7 +537,275 @@ function SortableItem({ id, item, onSelectItem, onCopy, onDelete, getTypeIcon, f
           </div>
         </CardContent>
       </Card>
+
+      {/* 分享对话框 */}
+      <Dialog open={shareOpen} onOpenChange={(o) => {
+        setShareOpen(o);
+        if (!o) {
+          setShareUrl(null);
+          setCreatingShare(false);
+          setExpiresIn('86400');
+          setMaxDownloads('');
+          setSharePassword('');
+        }
+      }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>创建分享链接</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {!shareUrl ? (
+              <>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">有效期</label>
+                  <select
+                    className="w-full rounded border px-2 py-1 text-sm bg-background"
+                    value={expiresIn}
+                    onChange={(e) => setExpiresIn(e.target.value)}
+                  >
+                    <option value="0">永不过期</option>
+                    <option value="3600">1 小时</option>
+                    <option value="86400">24 小时</option>
+                    <option value="604800">7 天</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">最大下载次数（可选）</label>
+                  <Input
+                    type="number"
+                    placeholder="不限则留空"
+                    value={maxDownloads}
+                    onChange={(e) => setMaxDownloads(e.target.value)}
+                    min={1}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">分享口令（可选）</label>
+                  <Input
+                    type="password"
+                    placeholder="不设置则留空"
+                    value={sharePassword}
+                    onChange={(e) => setSharePassword(e.target.value)}
+                  />
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button variant="outline" onClick={() => setShareOpen(false)}>取消</Button>
+                  <Button
+                    onClick={async () => {
+                      try {
+                        setCreatingShare(true);
+                        const payload: any = { itemId: item.id };
+                        const ei = parseInt(expiresIn, 10);
+                        if (!isNaN(ei) && ei > 0) payload.expiresIn = ei;
+                        if (maxDownloads.trim()) payload.maxDownloads = Number(maxDownloads);
+                        if (sharePassword.trim()) payload.password = sharePassword.trim();
+                        const res = await authFetch('/api/share', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify(payload),
+                        });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data?.error || '创建失败');
+                        const origin = typeof window !== 'undefined' ? window.location.origin : '';
+                        setShareUrl(origin + data.url);
+                      } catch (e: any) {
+                        toast({ title: '创建失败', description: e?.message || '请稍后重试', variant: 'destructive' });
+                      } finally {
+                        setCreatingShare(false);
+                      }
+                    }}
+                    disabled={creatingShare}
+                  >
+                    {creatingShare ? '创建中...' : '创建'}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">分享链接</label>
+                  <div className="flex gap-2">
+                    <Input readOnly value={shareUrl} />
+                    <Button
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(shareUrl!);
+                          toast({ title: '已复制链接' });
+                        } catch {}
+                      }}
+                    >
+                      复制
+                    </Button>
+                  </div>
+                  <div className="mt-2 text-sm text-muted-foreground">
+                    任何知道此链接的人都可访问。你可随时在详情页撤销分享（暂未提供 UI）。
+                  </div>
+                </div>
+                <div className="flex justify-end pt-2">
+                  <Button onClick={() => setShareOpen(false)}>完成</Button>
+                </div>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+}
+
+// 分享管理对话框
+function ShareManagerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+  const { toast } = useToast();
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const pageSize = 5;
+  const [includeRevoked, setIncludeRevoked] = useState(false);
+  const [shares, setShares] = useState<Array<{
+    token: string;
+    url: string;
+    item: { id: string; type: 'TEXT'|'IMAGE'|'FILE'; fileName?: string | null; fileSize?: number | null };
+    expiresAt?: string | null;
+    maxDownloads?: number | null;
+    downloadCount: number;
+    revoked: boolean;
+    requiresPassword: boolean;
+    createdAt: string;
+  }>>([]);
+
+  const load = async () => {
+    try {
+      setLoading(true);
+      const params = new URLSearchParams();
+      if (includeRevoked) params.set('includeRevoked', '1');
+      params.set('page', String(page));
+      params.set('pageSize', String(pageSize));
+      const res = await authFetch(`/api/share?${params.toString()}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || '加载失败');
+      setShares(json.data);
+      setHasMore(json.hasMore);
+    } catch (e: any) {
+      toast({ title: '加载失败', description: e?.message || '请稍后重试', variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (open) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, includeRevoked, page]);
+
+  const [hasMore, setHasMore] = useState(false);
+
+  const revoke = async (token: string) => {
+    try {
+      const res = await authFetch(`/api/share/${token}/revoke`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || '撤销失败');
+      toast({ title: '已撤销' });
+      await load();
+    } catch (e: any) {
+      toast({ title: '撤销失败', description: e?.message || '请稍后重试', variant: 'destructive' });
+    }
+  };
+
+  const removeShare = async (token: string) => {
+    try {
+      const res = await authFetch(`/api/share/${token}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || '删除失败');
+      toast({ title: '已删除' });
+      await load();
+    } catch (e: any) {
+      toast({ title: '删除失败', description: e?.message || '请稍后重试', variant: 'destructive' });
+    }
+  };
+
+  const copy = async (url: string) => {
+    try { await navigator.clipboard.writeText((window?.location?.origin || '') + url); toast({ title: '已复制' }); } catch {}
+  };
+
+  const expired = (s: any) => s.expiresAt && new Date(s.expiresAt).getTime() < Date.now();
+  const exhausted = (s: any) => typeof s.maxDownloads === 'number' && s.maxDownloads >= 0 && s.downloadCount >= s.maxDownloads;
+  const invalid = (s: any) => s.revoked || expired(s) || exhausted(s);
+
+  const statusText = (s: any) => {
+    if (s.revoked) return '已撤销';
+    if (expired(s)) return '已过期';
+    if (exhausted(s)) return '已用尽';
+    return '有效';
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>分享管理</DialogTitle>
+        </DialogHeader>
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-sm text-muted-foreground">共有 {shares.length} 条分享链接（第 {page} 页）</div>
+          <label className="text-sm flex items-center gap-2">
+            <input type="checkbox" checked={includeRevoked} onChange={(e) => { setIncludeRevoked(e.target.checked); setPage(1); }} />
+            显示已失效（撤销/过期/用尽）
+          </label>
+        </div>
+        <div className="overflow-x-auto border rounded">
+          <table className="w-full text-sm">
+            <thead className="bg-muted">
+              <tr>
+                <th className="text-left p-2">条目</th>
+                <th className="text-left p-2">链接</th>
+                <th className="text-left p-2">限制</th>
+                <th className="text-left p-2">状态</th>
+                <th className="text-right p-2">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={5} className="p-4">加载中...</td></tr>
+              ) : shares.length === 0 ? (
+                <tr><td colSpan={5} className="p-4">暂无分享</td></tr>
+              ) : (
+                shares.map((s) => (
+                  <tr key={s.token} className="border-t">
+                    <td className="p-2">
+                      <div className="font-medium">{s.item.type === 'TEXT' ? '文本' : (s.item.fileName || s.item.id)}</div>
+                      <div className="text-muted-foreground">{s.item.type}</div>
+                    </td>
+                    <td className="p-2">
+                      <div className="truncate max-w-[260px]">{s.url}</div>
+                      <div className="text-muted-foreground">{new Date(s.createdAt).toLocaleString('zh-CN')}</div>
+                    </td>
+                    <td className="p-2">
+                      <div>下载：{s.downloadCount}{typeof s.maxDownloads === 'number' ? `/${s.maxDownloads}` : ''}</div>
+                      <div>{s.expiresAt ? `到期：${new Date(s.expiresAt).toLocaleString('zh-CN')}` : '无限期'}</div>
+                      <div>{s.requiresPassword ? '有口令' : '无口令'}</div>
+                    </td>
+                    <td className="p-2">{statusText(s)}</td>
+                    <td className="p-2 text-right space-x-2">
+                      <Button variant="outline" size="sm" onClick={() => copy(s.url)}>复制</Button>
+                      {invalid(s) ? (
+                        <Button variant="destructive" size="sm" onClick={() => removeShare(s.token)}>删除</Button>
+                      ) : (
+                        <Button variant="destructive" size="sm" onClick={() => revoke(s.token)}>撤销</Button>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex justify-between items-center mt-3">
+          <div className="text-xs text-muted-foreground">每页 {pageSize} 条</div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>上一页</Button>
+            <Button variant="outline" size="sm" disabled={!hasMore} onClick={() => setPage((p) => p + 1)}>下一页</Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -679,14 +1047,26 @@ function ItemDetailDialog({
 
           {/* 操作按钮 */}
           <div className="flex justify-between pt-4 border-t">
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() => onDelete(item.id)}
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              删除
-            </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="destructive" size="sm">
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  删除
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>确认删除</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    删除后将无法恢复。确定要删除该条目吗？
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>取消</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => onDelete(item.id)}>确认删除</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               关闭
             </Button>

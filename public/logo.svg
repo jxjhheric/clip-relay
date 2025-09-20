@@ -1,20 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
-  <!-- 背景圆形主体（纯黑色） -->
-  <circle cx="128" cy="128" r="110" fill="#000000"/>
-  <!-- 顶部夹子（显著加大，确保小尺寸可见性） -->
-  <rect x="70" y="4" width="116" height="36" rx="18" fill="#1A1A1A"/>
-  <rect x="74" y="6" width="108" height="32" rx="16" fill="#333333"/>
-  <!-- 云朵（纯白色，添加微妙阴影） -->
-  <g transform="translate(128, 138)">
-    <!-- 云朵主体 - 优化形状 -->
-    <circle cx="-30" cy="5" r="30" fill="#FFFFFF"/>
-    <circle cx="0" cy="-10" r="38" fill="#FFFFFF"/>
-    <circle cx="30" cy="5" r="30" fill="#FFFFFF"/>
-    <!-- 云朵底部连接 - 优化曲线 -->
-    <path d="M -60 5 Q -60 35, -30 35 L 30 35 Q 60 35, 60 5" 
-          fill="#FFFFFF"/>
-    <!-- 云朵内部高光（使用半透明白色） -->
-    <ellipse cx="-15" cy="-5" rx="12" ry="8" fill="#FFFFFF" opacity="0.3"/>
-    <ellipse cx="15" cy="-5" rx="10" ry="6" fill="#FFFFFF" opacity="0.2"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <path fill="#000" shape-rendering="crispEdges"
+        d="M3 1H10V6H15V13L13 15H6V10H1V3L3 1Z"/>
 </svg>
