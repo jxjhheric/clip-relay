@@ -81,7 +81,7 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "4.1.12",
-    "esbuild": "^0.23.0",
+    "esbuild": "^0.25.9",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
