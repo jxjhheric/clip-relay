@@ -14,14 +14,17 @@ datasource db {
 }
 
 model ClipboardItem {
-  id        String   @id @default(cuid())
-  type      ItemType
-  content   String?
-  fileName  String?
-  fileSize  Int?
-  fileData  String?  // Base64 encoded file data
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(cuid())
+  type        ItemType
+  content     String?
+  fileName    String?
+  fileSize    Int?
+  contentType String?
+  // Mixed storage: small files/images inline as BLOB, large ones on disk
+  inlineData  Bytes?
+  filePath    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 enum ItemType {

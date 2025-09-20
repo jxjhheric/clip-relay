@@ -13,6 +13,11 @@ export function getAuthHeaders(): HeadersInit {
   };
 }
 
+// 读取已存储的密码（用于 Socket 握手）
+export function getStoredPassword(): string | null {
+  return typeof window !== 'undefined' ? sessionStorage.getItem(PASSWORD_STORAGE_KEY) : null;
+}
+
 
 // 验证密码
 export async function verifyPassword(password: string): Promise<boolean> {

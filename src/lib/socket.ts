@@ -25,12 +25,40 @@ export const setupSocket = (io: Server) => {
   }
   (io as any).__clipboard_initialized__ = true;
 
+  // 握手鉴权：仅允许同源访问并且需要携带正确的 token（即密码）
+  io.use((socket, next) => {
+    const serverPassword = process.env.CLIPBOARD_PASSWORD;
+    if (!serverPassword) {
+      return next(new Error('Authentication not configured on server'));
+    }
+
+    // 校验同源：Origin 的 host 必须与 Host 头一致（浏览器同源连接会带 Origin）
+    try {
+      const origin = socket.handshake.headers.origin as string | undefined;
+      const host = socket.handshake.headers.host as string | undefined;
+      if (origin && host) {
+        const url = new URL(origin);
+        if (url.host !== host) {
+          return next(new Error('CORS: cross-origin not allowed'));
+        }
+      }
+    } catch {
+      // 若 Origin 无法解析，继续走鉴权（大多数浏览器连接都会带 Origin）
+    }
+
+    const token = (socket.handshake.auth as any)?.token as string | undefined;
+    if (!token || token !== serverPassword) {
+      return next(new Error('Unauthorized'));
+    }
+
+    return next();
+  });
+
   io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
 
-    // Handle messages (demo)
+    // 简单回声（示例）
     socket.on('message', (msg: { text: string; senderId: string }) => {
-      // Echo only back to sender
       socket.emit('message', {
         text: `Echo: ${msg.text}`,
         senderId: 'system',
@@ -38,16 +66,8 @@ export const setupSocket = (io: Server) => {
       });
     });
 
-    // Handle disconnect
     socket.on('disconnect', () => {
       console.log('Client disconnected:', socket.id);
-    });
-
-    // Send welcome message (demo)
-    socket.emit('message', {
-      text: 'Welcome to WebSocket Echo Server!',
-      senderId: 'system',
-      timestamp: new Date().toISOString(),
     });
   });
 };

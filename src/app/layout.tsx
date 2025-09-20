@@ -14,21 +14,26 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Z.ai Code Scaffold - AI-Powered Development",
-  description: "Modern Next.js scaffold optimized for AI-powered development with Z.ai. Built with TypeScript, Tailwind CSS, and shadcn/ui.",
-  keywords: ["Z.ai", "Next.js", "TypeScript", "Tailwind CSS", "shadcn/ui", "AI development", "React"],
-  authors: [{ name: "Z.ai Team" }],
+  title: "Cloud Clipboard",
+  description: "Self-hosted cloud clipboard for text, files and images with realtime sync.",
+  keywords: ["Cloud Clipboard", "Next.js", "TypeScript", "Tailwind CSS", "shadcn/ui", "Socket.IO"],
+  authors: [{ name: "Cloud Clipboard" }],
+  icons: {
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/favicon.ico", sizes: "any" },
+    ],
+  },
   openGraph: {
-    title: "Z.ai Code Scaffold",
-    description: "AI-powered development with modern React stack",
-    url: "https://chat.z.ai",
-    siteName: "Z.ai",
+    title: "Cloud Clipboard",
+    description: "Share snippets and files across devices in realtime.",
+    siteName: "Cloud Clipboard",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Z.ai Code Scaffold",
-    description: "AI-powered development with modern React stack",
+    title: "Cloud Clipboard",
+    description: "Share snippets and files across devices in realtime.",
   },
 };
 

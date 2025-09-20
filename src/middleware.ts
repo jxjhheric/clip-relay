@@ -22,19 +22,18 @@ export function middleware(request: NextRequest) {
 
     // 从请求头获取认证信息
     const authHeader = request.headers.get('authorization');
+    const cookieToken = request.cookies.get('auth')?.value;
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return NextResponse.json(
-        { error: 'Missing or invalid authorization header' },
-        { status: 401 }
-      );
+    let token: string | undefined;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7);
+    } else if (cookieToken) {
+      token = cookieToken;
     }
 
-    const token = authHeader.substring(7); // 移除 'Bearer ' 前缀
-
-    if (token !== authPassword) {
+    if (!token || token !== authPassword) {
       return NextResponse.json(
-        { error: 'Invalid credentials' },
+        { error: 'Unauthorized' },
         { status: 401 }
       );
     }

@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { authFetch, verifyPassword, clearPassword, getAuthHeaders } from '@/lib/auth';
+import { authFetch, verifyPassword, clearPassword, getAuthHeaders, getStoredPassword } from '@/lib/auth';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 import { CLIPBOARD_CREATED_EVENT, CLIPBOARD_DELETED_EVENT } from '@/lib/socket-events';
@@ -24,7 +24,6 @@ interface ClipboardItem {
   content?: string;
   fileName?: string;
   fileSize?: number;
-  fileData?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -105,6 +104,29 @@ export default function Home() {
     fetchItems(searchTerm);
   };
 
+  // 打开详情：按需拉取详情（文件通过 /api/files/:id 流式获取）
+  const openItemById = async (id: string) => {
+    try {
+      const res = await authFetch(`/api/clipboard/${id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedItem(data);
+      } else {
+        toast({
+          title: '加载失败',
+          description: '无法加载条目详情',
+          variant: 'destructive',
+        });
+      }
+    } catch (e) {
+      toast({
+        title: '网络错误',
+        description: '请检查连接后重试',
+        variant: 'destructive',
+      });
+    }
+  };
+
   useEffect(() => {
     if (authenticated) {
       fetchItems(); // 初始加载
@@ -117,6 +139,9 @@ export default function Home() {
 
     const socketInstance = io({
       path: '/api/socketio',
+      auth: {
+        token: getStoredPassword() ?? '',
+      },
     });
 
     socketInstance.on(CLIPBOARD_CREATED_EVENT, (newItem: ClipboardItem) => {
@@ -288,7 +313,7 @@ export default function Home() {
                   key={item.id}
                   id={item.id}
                   item={item}
-                  onSelectItem={setSelectedItem}
+                  onSelectItem={(id: string) => openItemById(id)}
                   onCopy={copyToClipboard}
                   onDelete={handleDelete}
                   getTypeIcon={getTypeIcon}
@@ -348,7 +373,7 @@ function SortableItem({ id, item, onSelectItem, onCopy, onDelete, getTypeIcon, f
         className="group relative hover:shadow-md transition-shadow cursor-pointer h-52"
         onClick={() => {
           if (!isDragging) {
-            onSelectItem(item);
+            onSelectItem(item.id);
           }
         }}
       >
@@ -504,10 +529,8 @@ function ItemDetailDialog({
   };
 
   const downloadFile = () => {
-    if (!item.fileData) return;
-    
     const link = document.createElement('a');
-    link.href = item.fileData;
+    link.href = `/api/files/${item.id}?download=1`;
     link.download = item.fileName || 'download';
     document.body.appendChild(link);
     link.click();
@@ -578,12 +601,12 @@ function ItemDetailDialog({
           )}
 
           {/* 图片预览 */}
-          {item.type === 'IMAGE' && item.fileData && (
+          {item.type === 'IMAGE' && (
             <div>
               <h3 className="text-sm font-medium mb-2">图片预览</h3>
               <div className="bg-muted p-4 rounded-lg flex justify-center">
                 <img
-                  src={item.fileData}
+                  src={`/api/files/${item.id}`}
                   alt={item.fileName || '图片'}
                   className="max-w-full max-h-96 object-contain rounded"
                 />
@@ -602,7 +625,7 @@ function ItemDetailDialog({
           )}
 
           {/* 文件信息 */}
-          {item.type === 'FILE' && item.fileData && (
+          {item.type === 'FILE' && (
             <div>
               <h3 className="text-sm font-medium mb-2">文件信息</h3>
               <div className="bg-muted p-4 rounded-lg">

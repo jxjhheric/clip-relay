@@ -5,7 +5,7 @@ import { Server } from 'socket.io';
 import next from 'next';
 
 const dev = process.env.NODE_ENV !== 'production';
-const currentPort = 3000;
+const currentPort = Number(process.env.PORT) || 8087;
 const hostname = '0.0.0.0';
 
 // Custom server with Socket.IO integration
@@ -36,10 +36,7 @@ async function createCustomServer() {
     if (!io) {
       io = new Server(server, {
         path: '/api/socketio',
-        cors: {
-          origin: "*",
-          methods: ["GET", "POST"]
-        }
+        // 不配置 CORS，默认仅同源可用；跨域将被浏览器拦截
       });
       // make io accessible in API routes
       setIO(io);
@@ -49,7 +46,8 @@ async function createCustomServer() {
     // Start the server
     server.listen(currentPort, hostname, () => {
       console.log(`> Ready on http://${hostname}:${currentPort}`);
-      console.log(`> Socket.IO server running at ws://${hostname}:${currentPort}/api/socketio`);
+      console.log(`> Open http://localhost:${currentPort} in your browser`);
+      console.log(`> Socket.IO at ws://localhost:${currentPort}/api/socketio`);
     });
 
   } catch (err) {

@@ -32,23 +32,23 @@ npm ci
 ```bash
 npm run dev
 ```
-The server uses `nodemon` + `tsx` to reload `server.ts`. The Next.js dev build is served on [http://localhost:3000](http://localhost:3000).
+The server uses `nodemon` + `tsx` to reload `server.ts`. Open http://localhost:8087 in your browser (or set `PORT=xxxx`).
 
 ### Production build
 ```bash
 npm run build
 npm start
 ```
-`npm start` runs `prisma db push` before launching the custom server in production mode.
+`npm start` runs `prisma db push` before launching the custom server in production mode. The server listens on `PORT` (default 8087).
 
 ## Environment Variables
 Create a `.env` file based on the included example:
 
 ```
-DATABASE_URL="file:../db/custom.db"
+DATABASE_URL="file:../data/custom.db"
 CLIPBOARD_PASSWORD="change-me"
 ```
-- `DATABASE_URL` points Prisma to the SQLite database file. Relative paths are resolved from `prisma/schema.prisma`, so `file:../db/custom.db` maps to `db/custom.db` in the project root (and `/app/db/custom.db` inside Docker).
+- `DATABASE_URL` points Prisma to the SQLite database file. Relative paths are resolved from `prisma/schema.prisma`, so `file:../data/custom.db` maps to `data/custom.db` in the project root (and `/app/data/custom.db` inside Docker).
 - `CLIPBOARD_PASSWORD` controls access to the UI; users must enter the password once per session.
 
 ## Docker
@@ -71,15 +71,11 @@ server.ts            # Custom Next.js + Socket.IO server entry point
 
 ## Maintenance Notes
 - Some dependencies were inherited from the original scaffold. Periodically audit `package.json` to remove unused packages before building production images.
-- The repo includes `db/.gitkeep` so the database directory exists without committing SQLite files. Real database files under `db/` or `prisma/db/` are ignored by git.
+- The repo includes `data/.gitkeep` so the database directory exists without committing SQLite files. Real database files under `data/` or `prisma/db/` are ignored by git.
 - Tailwind CSS 4 tooling is sensitive to version drift; if you regenerate the lockfile, pin `tailwindcss` and `@tailwindcss/postcss` to the tested versions (currently `4.1.12`).
-- Uploaded files are stored base64-encoded in SQLite. For large deployments consider swapping to object storage or streaming uploads.
+- Mixed storage: small files/images are stored inline (SQLite BLOB), large files under `data/uploads/` and streamed via `/api/files/:id`.
 
 ## License
-This project began from a Z.ai scaffold and has since been adapted for the Cloud Clipboard use case.
-
-
-
-
+This project is a self-hosted Cloud Clipboard application.
 
 

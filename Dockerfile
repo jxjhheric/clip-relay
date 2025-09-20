@@ -40,8 +40,8 @@ COPY --from=builder /app/dist ./dist
 
 # The database file itself should be mounted as a volume,
 # but the directory needs to exist.
-RUN mkdir -p /app/db
+RUN mkdir -p /app/data /app/data/uploads
 
-EXPOSE 3000
+EXPOSE 8087
 
 CMD ["npm", "start"]
