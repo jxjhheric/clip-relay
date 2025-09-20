@@ -55,9 +55,13 @@ export async function GET(
 
     if (item.inlineData) {
       const bytes = item.inlineData as unknown as Uint8Array;
-      const blob = new Blob([bytes], { type: contentType });
+      const ab = (bytes.buffer as ArrayBuffer).slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength
+      );
       headers.set('Content-Length', String(bytes.byteLength));
-      return new NextResponse(blob, { headers });
+      headers.set('Content-Type', contentType);
+      return new NextResponse(ab, { headers });
     }
 
     return NextResponse.json({ error: 'File content missing' }, { status: 404 });
