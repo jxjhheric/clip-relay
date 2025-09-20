@@ -72,6 +72,10 @@ docker build -t cloud-clipboard:slim -f Dockerfile.slim .
 # Replace with your registry/namespace used in CI
 docker pull $REGISTRY/$NAMESPACE/cloud-clipboard:latest
 docker pull $REGISTRY/$NAMESPACE/cloud-clipboard:slim
+
+# Versioned (immutable) tags per commit SHA are also published:
+docker pull $REGISTRY/$NAMESPACE/cloud-clipboard:sha-$GITHUB_SHA
+docker pull $REGISTRY/$NAMESPACE/cloud-clipboard:slim-$GITHUB_SHA
 ```
 
 ### Run with Docker Compose (recommended)
@@ -85,6 +89,9 @@ Compose example (map the data directory for persistence):
 ```
 services:
   app:
+    # For reproducible deploys, prefer the SHA tag:
+    # image: $REGISTRY/$NAMESPACE/cloud-clipboard:sha-$GITHUB_SHA
+    # Or track latest for convenience:
     image: $REGISTRY/$NAMESPACE/cloud-clipboard:latest
     ports:
       - "8087:8087"
@@ -128,4 +135,3 @@ server.ts            # Custom Next.js + Socket.IO server entry point
 
 ## License
 This project is a self-hosted Cloud Clipboard application.
-

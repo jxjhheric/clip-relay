@@ -20,7 +20,7 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
-      - name: Build and push Docker image (latest only)
+      - name: Build and push Docker image (latest + sha)
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -28,8 +28,9 @@ jobs:
           push: true
           tags: |
             ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/cloud-clipboard:latest
+            ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/cloud-clipboard:sha-${{ github.sha }}
 
-      - name: Build and push Docker image (slim)
+      - name: Build and push Docker image (slim + sha)
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -37,3 +38,4 @@ jobs:
           push: true
           tags: |
             ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/cloud-clipboard:slim
+            ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/cloud-clipboard:slim-${{ github.sha }}
