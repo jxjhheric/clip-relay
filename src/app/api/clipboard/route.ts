@@ -2,8 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getIO, CLIPBOARD_CREATED_EVENT } from '@/lib/socket';
 import { promises as fs } from 'fs';
+import { createWriteStream } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
+import { Readable, pipeline } from 'stream';
+import { promisify } from 'util';
+
+const pump = promisify(pipeline);
 
 // GET /api/clipboard - 获取所有剪贴板条目
 export async function GET(request: NextRequest) {
@@ -67,7 +72,8 @@ export async function POST(request: NextRequest) {
     const file = formData.get('file') as File | null;
     
     // Mixed storage strategy
-    const MAX_INLINE_BYTES = 256 * 1024; // 256KB threshold for inline storage
+    const MAX_INLINE_BYTES = 256 * 1024;
+    const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
     let fileName: string | undefined;
     let fileSize: number | undefined;
     let contentType: string | undefined;
@@ -83,25 +89,32 @@ export async function POST(request: NextRequest) {
 
     // Prepare file handling
     if (file) {
-      const buffer = Buffer.from(await file.arrayBuffer());
+      if (file.size > MAX_UPLOAD_BYTES) {
+        return NextResponse.json(
+          { error: 'File too large' },
+          { status: 413 }
+        );
+      }
       fileName = file.name;
       fileSize = file.size;
       contentType = file.type || undefined;
 
-      if (buffer.byteLength <= MAX_INLINE_BYTES) {
+      if (file.size <= MAX_INLINE_BYTES) {
+        const buffer = Buffer.from(await file.arrayBuffer());
         inlineData = buffer;
       } else {
-        // Persist to filesystem under data/uploads
         const id = randomUUID();
         const uploadsDir = path.join(process.cwd(), 'data', 'uploads');
         await fs.mkdir(uploadsDir, { recursive: true });
         const ext = path.extname(fileName || '') || '';
         const fileBaseName = `${id}${ext}`;
         const absPath = path.join(uploadsDir, fileBaseName);
-        await fs.writeFile(absPath, buffer);
+
+        const webStream = file.stream();
+        const nodeStream = Readable.fromWeb(webStream as any);
+        await pump(nodeStream, createWriteStream(absPath));
         filePathRel = path.join('uploads', fileBaseName).replace(/\\/g, '/');
 
-        // Create with provided id to match file path
         const newItemFS = await db.clipboardItem.create({
           data: {
             id,
@@ -114,7 +127,6 @@ export async function POST(request: NextRequest) {
           },
         });
 
-        // WebSocket broadcast
         const io = getIO();
         const createdBroadcast = {
           id: newItemFS.id,

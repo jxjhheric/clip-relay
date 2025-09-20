@@ -1,0 +1,68 @@
+# ---- Base Stage ----
+FROM node:20-alpine AS base
+
+WORKDIR /app
+
+# Prisma needs OpenSSL at runtime
+RUN apk add --no-cache openssl
+
+# ---- Dependencies Stage ----
+FROM base AS deps
+
+COPY package.json package-lock.json ./
+# Install all deps (incl. dev) to build
+RUN npm ci --include=dev
+
+# ---- Builder Stage ----
+FROM deps AS builder
+
+COPY . .
+
+# Ensure data dir exists so db file can be created at build (optional)
+RUN mkdir -p /app/data /app/data/uploads
+
+# Generate Prisma client and build Next (postbuild compiles custom server)
+RUN npm run db:generate
+RUN npm run build
+
+# Optionally bake schema into the image (SQLite). If you always mount /app/data, you can skip this.
+RUN npx prisma db push --skip-generate || true
+
+# Clean up caches to reduce layer size (node_modules not copied to runner)
+RUN rm -rf .next/cache && npm cache clean --force
+
+# ---- Runner Stage (Slim) ----
+FROM node:20-alpine AS runner
+
+ENV NODE_ENV=production
+WORKDIR /app
+
+# Runtime dependency for Prisma
+RUN apk add --no-cache openssl
+
+# Copy minimal Next runtime with its pruned node_modules
+COPY --from=builder /app/.next/standalone ./
+
+# Static assets required by Next
+COPY --from=builder /app/.next/static ./.next/static
+
+# Public assets and Prisma schema
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/prisma ./prisma
+
+# Custom server compiled output and (optionally) pre-baked DB dir
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/data ./data
+
+# Ensure uploads dir exists (safe if already copied)
+RUN mkdir -p /app/data /app/data/uploads
+
+EXPOSE 8087
+
+# Note: we do NOT run `npx prisma db push` here to keep the image minimal.
+# If you mount /app/data as a volume and it is empty, run a one-shot init:
+#   docker run --rm -v $(pwd)/data:/app/data --env-file .env <image> node -e "(async()=>{const{PrismaClient}=require('@prisma/client');const db=new PrismaClient();await db.$queryRaw`SELECT 1`;console.log('DB ready')})()"
+# or build-time baked schema above will already create tables for SQLite.
+
+CMD ["node", "dist/server.js"]
+

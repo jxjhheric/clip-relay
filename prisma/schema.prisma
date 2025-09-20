@@ -27,6 +27,8 @@ model ClipboardItem {
   updatedAt   DateTime @updatedAt
 
   shares      ShareLink[]
+
+  @@index([createdAt, id])
 }
 
 model ShareLink {
@@ -42,6 +44,7 @@ model ShareLink {
   updatedAt     DateTime @updatedAt
 
   @@index([itemId])
+  @@index([createdAt])
 }
 
 enum ItemType {
