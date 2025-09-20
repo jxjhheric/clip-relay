@@ -52,11 +52,62 @@ CLIPBOARD_PASSWORD="change-me"
 - `CLIPBOARD_PASSWORD` controls access to the UI; users must enter the password once per session.
 
 ## Docker
-A multi-stage Dockerfile is provided. To build locally:
+
+Two image variants are available:
+
+- `:latest` (default) — built from `Dockerfile`. Easiest to use; on container start it runs `prisma db push` to initialize the SQLite schema automatically. Best for new users and new environments.
+- `:slim` — built from `Dockerfile.slim`. Smaller and faster to pull. Does not run `db push` on start; first-time empty volume requires a one-time initialization.
+
+### Build locally
 ```bash
-docker build -t cloud-clipboard .
+# Regular image
+docker build -t cloud-clipboard:latest -f Dockerfile .
+
+# Slim image
+docker build -t cloud-clipboard:slim -f Dockerfile.slim .
 ```
-Consider trimming dependencies (`npm prune --omit=dev`) or using Next.js standalone output if you need a smaller image.
+
+### Pull prebuilt images
+```bash
+# Replace with your registry/namespace used in CI
+docker pull $REGISTRY/$NAMESPACE/cloud-clipboard:latest
+docker pull $REGISTRY/$NAMESPACE/cloud-clipboard:slim
+```
+
+### Run with Docker Compose (recommended)
+Create `.env` with at least:
+```
+DATABASE_URL="file:../data/custom.db"
+CLIPBOARD_PASSWORD="change-me"
+```
+
+Compose example (map the data directory for persistence):
+```
+services:
+  app:
+    image: $REGISTRY/$NAMESPACE/cloud-clipboard:latest
+    ports:
+      - "8087:8087"
+    env_file: .env
+    volumes:
+      - /srv/cloud-clipboard/data:/app/data
+    restart: unless-stopped
+    pull_policy: always
+```
+
+#### First-time init note for `:slim`
+If you use the `:slim` image on a brand-new empty volume, initialize the DB schema once (choose one):
+
+1) Use the `:latest` image to run a one-shot init, then switch back to `:slim`:
+```bash
+docker run --rm \
+  -v /srv/cloud-clipboard/data:/app/data \
+  --env-file /srv/cloud-clipboard/.env \
+  $REGISTRY/$NAMESPACE/cloud-clipboard:latest \
+  npx prisma db push --skip-generate
+```
+
+2) Temporarily start with `:latest` using your compose to create tables, stop it, then change the image tag to `:slim` and start again.
 
 ## Project Structure
 ```
@@ -77,5 +128,4 @@ server.ts            # Custom Next.js + Socket.IO server entry point
 
 ## License
 This project is a self-hosted Cloud Clipboard application.
-
 

@@ -20,13 +20,20 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
-      - name: Build and push Docker image
+      - name: Build and push Docker image (latest only)
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: Dockerfile
           push: true
-          # The tags should match the format your registry expects
-          # We push both a unique tag based on the commit SHA and the :latest tag
           tags: |
-            ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/cloud-clipboard:${{ github.sha }}
             ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/cloud-clipboard:latest
+
+      - name: Build and push Docker image (slim)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.slim
+          push: true
+          tags: |
+            ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/cloud-clipboard:slim
