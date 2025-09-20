@@ -32,9 +32,12 @@ export async function POST(
     }
 
     const res = NextResponse.json({ success: true });
+    const protoHeader = request.headers.get('x-forwarded-proto');
+    const scheme = (protoHeader || request.nextUrl.protocol.replace(':','')).toLowerCase();
+    const isSecure = scheme === 'https';
     res.cookies.set(`share_auth_${token}`, share.passwordHash, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: isSecure,
       sameSite: 'lax',
       path: '/',
       maxAge: 60 * 60 * 24 * 7,
@@ -44,4 +47,3 @@ export async function POST(
     return NextResponse.json({ error: 'verify failed' }, { status: 500 });
   }
 }
-

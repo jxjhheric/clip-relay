@@ -12,10 +12,14 @@ export async function POST(request: NextRequest) {
 
     if (password === correctPassword) {
       const res = NextResponse.json({ success: true });
+      // decide secure based on incoming scheme (supports reverse proxies)
+      const protoHeader = request.headers.get('x-forwarded-proto');
+      const scheme = (protoHeader || request.nextUrl.protocol.replace(':','')).toLowerCase();
+      const isSecure = scheme === 'https';
       // Set a cookie so that browser requests (e.g., <img src>) carry auth automatically
       res.cookies.set('auth', password, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        secure: isSecure,
         sameSite: 'lax',
         path: '/',
         maxAge: 60 * 60 * 24 * 7, // 7 days
