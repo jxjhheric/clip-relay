@@ -11,7 +11,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset",
-    "build:server": "tsc --project tsconfig.server.json",
+    "build:server": "esbuild server.ts --bundle --platform=node --target=node20 --format=cjs --external:next --external:next/* --outfile=dist/server.js",
     "postbuild": "npm run build:server"
   },
   "dependencies": {
@@ -81,6 +81,7 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "4.1.12",
+    "esbuild": "^0.23.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

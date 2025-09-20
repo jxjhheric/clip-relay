@@ -22,14 +22,10 @@ COPY . .
 RUN mkdir -p /app/data /app/data/uploads
 
 # Generate Prisma client and build Next (postbuild compiles custom server)
-RUN npm run db:generate
-RUN npm run build
-
-# Optionally bake schema into the image (SQLite). If you always mount /app/data, you can skip this.
-RUN npx prisma db push --skip-generate || true
-
-# Clean up caches to reduce layer size (node_modules not copied to runner)
-RUN rm -rf .next/cache && npm cache clean --force
+RUN npm run db:generate \
+ && npm run build \
+ && rm -rf .next/cache \
+ && npm cache clean --force
 
 # ---- Runner Stage (Slim) ----
 FROM node:20-alpine AS runner
@@ -52,10 +48,11 @@ COPY --from=builder /app/prisma ./prisma
 
 # Custom server compiled output and (optionally) pre-baked DB dir
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/data ./data
 
 # Ensure uploads dir exists (safe if already copied)
 RUN mkdir -p /app/data /app/data/uploads
+
+# Socket.IO and its deps are bundled into dist/server.js via esbuild.
 
 EXPOSE 8087
 
@@ -65,4 +62,3 @@ EXPOSE 8087
 # or build-time baked schema above will already create tables for SQLite.
 
 CMD ["node", "dist/server.js"]
-
