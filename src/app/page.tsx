@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Search, Plus, Copy, Trash2, FileText, Image, File } from 'lucide-react';
+import { Search, Plus, Copy, Trash2, FileText, Image as ImageIcon, File as FileIcon } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
@@ -198,11 +198,11 @@ export default function Home() {
       case 'TEXT':
         return <FileText className="h-4 w-4" />;
       case 'IMAGE':
-        return <Image className="h-4 w-4" />;
+        return <ImageIcon className="h-4 w-4" />;
       case 'FILE':
-        return <File className="h-4 w-4" />;
+        return <FileIcon className="h-4 w-4" />;
       default:
-        return <File className="h-4 w-4" />;
+        return <FileIcon className="h-4 w-4" />;
     }
   };
 
@@ -390,7 +390,9 @@ function SortableItem({ id, item, onSelectItem, onCopy, onDelete, getTypeIcon, f
                 className="cursor-pointer"
                 onClick={(e) => {
                   e.stopPropagation();
-                  item.content && onCopy(item.content);
+                  if (item.content) {
+                    onCopy(item.content);
+                  }
                 }}
                 disabled={!item.content}
               >
@@ -542,11 +544,11 @@ function ItemDetailDialog({
       case 'TEXT':
         return <FileText className="h-5 w-5" />;
       case 'IMAGE':
-        return <Image className="h-5 w-5" />;
+        return <ImageIcon className="h-5 w-5" />;
       case 'FILE':
-        return <File className="h-5 w-5" />;
+        return <FileIcon className="h-5 w-5" />;
       default:
-        return <File className="h-5 w-5" />;
+        return <FileIcon className="h-5 w-5" />;
     }
   };
 
@@ -886,7 +888,7 @@ function AddItemDialog({ onItemAdded }: { onItemAdded: () => void }) {
             >
               {file ? (
                 <div className="space-y-2">
-                  <File className="h-8 w-8 text-green-600 mx-auto" />
+                  <FileIcon className="h-8 w-8 text-green-600 mx-auto" />
                   <p className="text-sm font-medium">{file.name}</p>
                   <p className="text-xs text-muted-foreground">
                     {(file.size / 1024 / 1024).toFixed(2)} MB
@@ -901,7 +903,7 @@ function AddItemDialog({ onItemAdded }: { onItemAdded: () => void }) {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  <File className="h-8 w-8 text-muted-foreground mx-auto" />
+                  <FileIcon className="h-8 w-8 text-muted-foreground mx-auto" />
                   <p className="text-sm text-muted-foreground">
                     拖拽文件到此处、点击选择，或在此处按 Ctrl+V 粘贴图片
                   </p>
