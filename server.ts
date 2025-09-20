@@ -5,17 +5,23 @@ import { Server } from 'socket.io';
 // Load Next from standalone bundle path in production (slim image),
 // and fall back to regular 'next' for local/dev environments.
 function loadNext() {
-  try {
-    // Prefer Next bundled inside standalone output
-    // Available at runtime in slim image
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const mod = require('./.next/standalone/node_modules/next');
-    return (mod && mod.default) ? mod.default : mod;
-  } catch {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const mod = require('next');
-    return (mod && mod.default) ? mod.default : mod;
+  // Use a dynamic require to prevent bundlers from statically following this path
+  const dynamicRequire: NodeRequire = (eval('require') as NodeRequire);
+  const candidates = [
+    // When dist/server.js lives under /app/dist and standalone under /app/.next
+    '../.next/standalone/node_modules/next',
+    // Fallback to regular resolution (dev/local)
+    'next',
+  ];
+  for (const m of candidates) {
+    try {
+      const mod = dynamicRequire(m as any);
+      return (mod && (mod as any).default) ? (mod as any).default : mod;
+    } catch {
+      // try next candidate
+    }
   }
+  throw new Error('Failed to load Next runtime');
 }
 
 const dev = process.env.NODE_ENV !== 'production';
