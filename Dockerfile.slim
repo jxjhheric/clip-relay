@@ -54,6 +54,11 @@ RUN mkdir -p /app/data /app/data/uploads
 
 # Socket.IO and its deps are bundled into dist/server.js via esbuild.
 
+# Overlay Next compiled vendor modules (e.g., webpack) that are referenced at runtime
+# but may be pruned in the minimal standalone bundle. This is much smaller than
+# copying the whole next package while fixing the module-not-found error.
+COPY --from=deps /app/node_modules/next/dist/compiled /app/node_modules/next/dist/compiled
+
 # Next is loaded from ./.next/standalone/node_modules by the custom server,
 # so we do not need a separate copy under /app/node_modules.
 
