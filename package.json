@@ -11,7 +11,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset",
-    "build:server": "esbuild server.ts --bundle --platform=node --target=node20 --format=cjs --external:next --external:next/* --outfile=dist/server.js",
+    "build:server": "esbuild server.ts --bundle --packages=bundle --platform=node --target=node20 --format=cjs --external:next --external:next/* --outfile=dist/server.js",
     "postbuild": "npm run build:server"
   },
   "dependencies": {
