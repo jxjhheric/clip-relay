@@ -54,7 +54,10 @@ export async function GET(
     }
 
     if (item.inlineData) {
-      return new NextResponse(item.inlineData, { headers });
+      const bytes = item.inlineData as unknown as Uint8Array;
+      const blob = new Blob([bytes], { type: contentType });
+      headers.set('Content-Length', String(bytes.byteLength));
+      return new NextResponse(blob, { headers });
     }
 
     return NextResponse.json({ error: 'File content missing' }, { status: 404 });
@@ -62,4 +65,3 @@ export async function GET(
     return NextResponse.json({ error: 'Failed to read file' }, { status: 500 });
   }
 }
-
