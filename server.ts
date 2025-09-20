@@ -2,7 +2,21 @@
 import { setupSocket, setIO, getIO } from './src/lib/socket';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import next from 'next';
+// Load Next from standalone bundle path in production (slim image),
+// and fall back to regular 'next' for local/dev environments.
+function loadNext() {
+  try {
+    // Prefer Next bundled inside standalone output
+    // Available at runtime in slim image
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mod = require('./.next/standalone/node_modules/next');
+    return (mod && mod.default) ? mod.default : mod;
+  } catch {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mod = require('next');
+    return (mod && mod.default) ? mod.default : mod;
+  }
+}
 
 const dev = process.env.NODE_ENV !== 'production';
 const currentPort = Number(process.env.PORT) || 8087;
@@ -12,7 +26,8 @@ const hostname = '0.0.0.0';
 async function createCustomServer() {
   try {
     // Create Next.js app
-    const nextApp = next({
+    const nextImpl = loadNext();
+    const nextApp = nextImpl({
       dev,
       dir: process.cwd(),
       // In production, use the current directory where .next is located
