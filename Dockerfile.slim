@@ -54,6 +54,12 @@ RUN mkdir -p /app/data /app/data/uploads
 
 # Socket.IO and its deps are bundled into dist/server.js via esbuild.
 
+# Ensure the Next runtime has full compiled vendor available (e.g., webpack).
+# The standalone bundle provides a minimal next copy, but some compiled modules
+# may be referenced internally. Copying the Next package from deps fills gaps
+# while remaining small compared to a full node_modules copy.
+COPY --from=deps /app/node_modules/next /app/node_modules/next
+
 EXPOSE 8087
 
 # Note: we do NOT run `npx prisma db push` here to keep the image minimal.
