@@ -1,38 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
-  <!-- 背景圆形主体（增加渐变效果） -->
-  <defs>
-    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#6366F1;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#4F46E5;stop-opacity:1" />
-    </linearGradient>
-    <!-- 云朵阴影滤镜 -->
-    <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur in="SourceAlpha" stdDeviation="3"/>
-      <feOffset dx="0" dy="2" result="offsetblur"/>
-      <feFlood flood-color="#000000" flood-opacity="0.1"/>
-      <feComposite in2="offsetblur" operator="in"/>
-      <feMerge>
-        <feMergeNode/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
-  </defs>
-  <!-- 圆形主体 -->
-  <circle cx="128" cy="128" r="110" fill="url(#bgGradient)"/>
-  <!-- 顶部夹子（增加立体感） -->
-  <rect x="104" y="8" width="48" height="24" rx="12" fill="#818CF8" opacity="0.9"/>
-  <rect x="104" y="10" width="48" height="20" rx="10" fill="#A5B4FC" opacity="0.7"/>
-  <!-- 云朵（增加细节和阴影） -->
-  <g transform="translate(128, 128)" filter="url(#shadow)">
-    <!-- 云朵主体 - 优化形状和比例 -->
+  <!-- 背景圆形主体（纯黑色） -->
+  <circle cx="128" cy="128" r="110" fill="#000000"/>
+  <!-- 顶部夹子（显著加大，确保小尺寸可见性） -->
+  <rect x="70" y="4" width="116" height="36" rx="18" fill="#1A1A1A"/>
+  <rect x="74" y="6" width="108" height="32" rx="16" fill="#333333"/>
+  <!-- 云朵（纯白色，添加微妙阴影） -->
+  <g transform="translate(128, 138)">
+    <!-- 云朵主体 - 优化形状 -->
     <circle cx="-30" cy="5" r="30" fill="#FFFFFF"/>
     <circle cx="0" cy="-10" r="38" fill="#FFFFFF"/>
     <circle cx="30" cy="5" r="30" fill="#FFFFFF"/>
     <!-- 云朵底部连接 - 优化曲线 -->
     <path d="M -60 5 Q -60 35, -30 35 L 30 35 Q 60 35, 60 5" 
           fill="#FFFFFF"/>
-    <!-- 云朵内部高光 -->
-    <ellipse cx="-15" cy="-5" rx="12" ry="8" fill="#F0F9FF" opacity="0.6"/>
-    <ellipse cx="15" cy="-5" rx="10" ry="6" fill="#F0F9FF" opacity="0.5"/>
+    <!-- 云朵内部高光（使用半透明白色） -->
+    <ellipse cx="-15" cy="-5" rx="12" ry="8" fill="#FFFFFF" opacity="0.3"/>
+    <ellipse cx="15" cy="-5" rx="10" ry="6" fill="#FFFFFF" opacity="0.2"/>
   </g>
 </svg>
