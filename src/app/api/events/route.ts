@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { registerSseClient, unregisterSseClient } from '@/lib/sse';
 import { randomUUID } from 'crypto';
-import { TransformStream } from 'stream/web';
 
 export async function GET(request: NextRequest) {
   // Create a stream and expose a writer for pushing events
