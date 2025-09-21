@@ -10,6 +10,8 @@ A self-hosted cloud clipboard for quickly sharing text snippets, files, and imag
 - Optional password gate stored in sessionStorage
 - Responsive UI built from shadcn/ui components and Tailwind CSS 4
 
+[简体中文文档](README.zh-CN.md)
+
 ## Architecture Overview
 - **Frontend**: Next.js App Router (React 19) with shadcn/ui component primitives and Tailwind CSS 4 for styling (`src/app`, `src/components/ui`)
 - **Server**: Custom Node entry (`server.ts`) bootstraps Next.js and attaches a Socket.IO server for realtime events
@@ -48,7 +50,7 @@ Create a `.env` file based on the included example:
 DATABASE_URL="file:../data/custom.db"
 CLIPBOARD_PASSWORD="change-me"
 ```
-- `DATABASE_URL` points Prisma to the SQLite database file. Relative paths are resolved from `prisma/schema.prisma`, so `file:../data/custom.db` maps to `data/custom.db` in the project root (and `/app/data/custom.db` inside Docker).
+- `DATABASE_URL` points Prisma to the SQLite database file. Relative paths are resolved from `prisma/schema.prisma`, so `file:../data/custom.db` maps to `data/custom.db` in the project root (and `/app/data/custom.db` inside Docker). If not set, the app falls back to `file:<project_root>/data/custom.db` automatically.
 - `CLIPBOARD_PASSWORD` controls access to the UI; users must enter the password once per session.
 
 ## Docker
@@ -115,6 +117,14 @@ docker run --rm \
 ```
 
 2) Temporarily start with `:latest` using your compose to create tables, stop it, then change the image tag to `:slim` and start again.
+
+## CI / Workflow
+
+The GitHub Actions workflow is now manual to avoid building on every push. Trigger it from the Actions tab:
+
+- Workflow name: "Build and Push Docker Image"
+- Event: `workflow_dispatch` (Run workflow)
+- Optionally toggle whether to also build/push the `slim` image via the input parameter.
 
 ## Project Structure
 ```

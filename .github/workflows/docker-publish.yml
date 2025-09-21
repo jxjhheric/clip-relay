@@ -1,9 +1,14 @@
 name: Build and Push Docker Image
 
-# This workflow runs on pushes to the main or master branch
+# Manual trigger only to avoid building on every push
 on:
-  push:
-    branches: [ "main", "master" ]
+  workflow_dispatch:
+    inputs:
+      build_slim:
+        description: "Also build and push the slim image"
+        type: boolean
+        required: false
+        default: true
 
 jobs:
   build-and-push:
@@ -31,6 +36,7 @@ jobs:
             ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/cloud-clipboard:sha-${{ github.sha }}
 
       - name: Build and push Docker image (slim + sha)
+        if: inputs.build_slim == true
         uses: docker/build-push-action@v5
         with:
           context: .
