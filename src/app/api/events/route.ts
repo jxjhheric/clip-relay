@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { registerSseClient, unregisterSseClient } from '@/lib/sse';
+import { randomUUID } from 'crypto';
+import { TransformStream } from 'stream/web';
 
 export async function GET(request: NextRequest) {
   // Create a stream and expose a writer for pushing events
   const ts = new TransformStream();
   const writer = ts.writable.getWriter();
   const encoder = new TextEncoder();
-  const clientId = crypto.randomUUID();
+  const clientId = randomUUID();
 
   const write = (chunk: string) => writer.write(encoder.encode(chunk));
   const close = () => { try { writer.close(); } catch {} };
@@ -35,4 +37,3 @@ export async function GET(request: NextRequest) {
 
   return new NextResponse(ts.readable, { headers });
 }
-

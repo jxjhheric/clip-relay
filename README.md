@@ -30,9 +30,9 @@ A self-hosted cloud clipboard for quickly sharing text snippets, files, and imag
 
 ### Install dependencies
 ```bash
-npm ci
+npm install
 ```
-> Use `npm ci` to keep dependency versions aligned with `package-lock.json`. This avoids accidental upgrades that can break the Tailwind/PostCSS toolchain.
+> Use `npm install` to sync dependencies. If you pin lockfiles in CI, prefer a clean `npm ci` run after updating the lockfile.
 
 ### Development
 ```bash
@@ -58,30 +58,20 @@ CLIPBOARD_PASSWORD="change-me"
 - `CLIPBOARD_PASSWORD` controls access to the UI; users must enter the password once per session.
 
 ## Docker
-
-Two image variants are available:
-
-- `:latest` (default) — built from `Dockerfile`. Easiest to use.
-- `:slim` — built from `Dockerfile.slim`. Smaller and faster to pull. First-time empty volume is auto-initialized at runtime.
+The provided `Dockerfile` builds a slim, production-ready image. First-time empty volumes are auto-initialized at runtime.
 
 ### Build locally
 ```bash
-# Regular image
 docker build -t cloud-clipboard:latest -f Dockerfile .
-
-# Slim image
-docker build -t cloud-clipboard:slim -f Dockerfile.slim .
 ```
 
 ### Pull prebuilt images
 ```bash
 # Replace with your registry/namespace used in CI
 docker pull $REGISTRY/$NAMESPACE/cloud-clipboard:latest
-docker pull $REGISTRY/$NAMESPACE/cloud-clipboard:slim
 
 # Versioned (immutable) tags per commit SHA are also published:
 docker pull $REGISTRY/$NAMESPACE/cloud-clipboard:sha-$GITHUB_SHA
-docker pull $REGISTRY/$NAMESPACE/cloud-clipboard:slim-$GITHUB_SHA
 ```
 
 ### Run with Docker Compose (recommended)
@@ -108,8 +98,8 @@ services:
     pull_policy: always
 ```
 
-#### First-time init note for `:slim`
-No manual step is needed anymore. The app creates tables on first start when the SQLite file is empty.
+#### First-time init note
+No manual step is needed. The app creates tables on first start when the SQLite file is empty.
 
 ## CI / Workflow
 
@@ -117,7 +107,7 @@ The GitHub Actions workflow is now manual to avoid building on every push. Trigg
 
 - Workflow name: "Build and Push Docker Image"
 - Event: `workflow_dispatch` (Run workflow)
-- Optionally toggle whether to also build/push the `slim` image via the input parameter.
+- Optionally publish versioned (immutable) tags per commit SHA.
 
 ## Project Structure
 ```
@@ -125,7 +115,7 @@ src/
 ├─ app/              # App Router pages, API routes, layout, global styles
 ├─ components/ui/    # Reusable shadcn/ui wrappers
 ├─ hooks/            # Custom hooks (toast, mobile detection)
-└─ lib/              # Auth, DB, socket helpers, util functions
+└─ lib/              # Auth, DB, SSE helpers, util functions
 src/lib/db/schema.ts # Drizzle ORM schema (SQLite)
 server.ts            # Custom Next.js server entry point (SSE realtime)
 ```

@@ -3,12 +3,6 @@ name: Build and Push Docker Image
 # Manual trigger only to avoid building on every push
 on:
   workflow_dispatch:
-    inputs:
-      build_slim:
-        description: "Also build and push the slim image"
-        type: boolean
-        required: false
-        default: true
 
 jobs:
   build-and-push:
@@ -34,14 +28,3 @@ jobs:
           tags: |
             ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/cloud-clipboard:latest
             ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/cloud-clipboard:sha-${{ github.sha }}
-
-      - name: Build and push Docker image (slim + sha)
-        if: inputs.build_slim == true
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: Dockerfile.slim
-          push: true
-          tags: |
-            ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/cloud-clipboard:slim
-            ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/cloud-clipboard:slim-${{ github.sha }}

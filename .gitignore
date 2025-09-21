@@ -53,8 +53,6 @@ server.log
 /data/*.sqlite3
 /data/*.db-wal
 /data/*.db-shm
-/prisma/db/*.db
-/prisma/db/*.sqlite
 !/data/.gitkeep
 # ignore uploaded files content
 /data/uploads/**

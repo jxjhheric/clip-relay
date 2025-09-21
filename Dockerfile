@@ -3,12 +3,11 @@ FROM node:20-alpine AS base
 
 WORKDIR /app
 
-# No extra runtime system dependencies required
-
 # ---- Dependencies Stage ----
 FROM base AS deps
 
 COPY package.json package-lock.json ./
+# Install native build tools for better-sqlite3, then install deps (incl. dev)
 RUN apk add --no-cache python3 make g++ \
  && npm install --include=dev
 
@@ -17,30 +16,42 @@ FROM deps AS builder
 
 COPY . .
 
-RUN npm run build
+# Ensure data dir exists so db file can be created at build (optional)
+RUN mkdir -p /app/data /app/data/uploads
 
-# Remove development-only dependencies and caches
-RUN npm prune --omit=dev \
-  && rm -rf .next/cache \
-  && npm cache clean --force
+# Build Next (postbuild compiles custom server)
+RUN npm run build \
+ && rm -rf .next/cache \
+ && npm cache clean --force
 
-# ---- Runner Stage ----
-FROM base AS runner
+# ---- Runner Stage (Slim) ----
+FROM node:20-alpine AS runner
 
 ENV NODE_ENV=production
+WORKDIR /app
 
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/package-lock.json ./package-lock.json
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/.next ./.next
+# Copy minimal Next runtime with its pruned node_modules
+COPY --from=builder /app/.next/standalone ./
+
+# Static assets required by Next
+COPY --from=builder /app/.next/static ./.next/static
+
+# Public assets
 COPY --from=builder /app/public ./public
-# Prisma schema not needed anymore
+
+# Custom server compiled output and (optionally) pre-baked DB dir
 COPY --from=builder /app/dist ./dist
 
-# The database file itself should be mounted as a volume,
-# but the directory needs to exist.
+# Ensure uploads dir exists (safe if already copied)
 RUN mkdir -p /app/data /app/data/uploads
+
+# Overlay Next compiled vendor modules (e.g., webpack) that are referenced at runtime
+# but may be pruned in the minimal standalone bundle. This is much smaller than
+# copying the whole next package while fixing the module-not-found error.
+COPY --from=deps /app/node_modules/next/dist/compiled /app/node_modules/next/dist/compiled
 
 EXPOSE 8087
 
-CMD ["npm", "start"]
+# Database tables are created at runtime on first start using better-sqlite3.
+
+CMD ["node", "dist/server.js"]
