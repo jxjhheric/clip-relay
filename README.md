@@ -12,6 +12,10 @@ A self-hosted cloud clipboard for quickly sharing text snippets, files, and imag
 - Optional password gate stored in sessionStorage
 - Responsive UI built from shadcn/ui components and Tailwind CSS 4
 
+[**Screenshots**]
+- Home: ![Home](public/screenshots/home.png)
+- Detail dialog: ![Detail](public/screenshots/detail.png)
+
 ## Architecture Overview
 - **Frontend**: Next.js App Router (React 19) with shadcn/ui component primitives and Tailwind CSS 4 for styling (`src/app`, `src/components/ui`)
 - **Server**: Custom Node entry (`server.ts`) bootstraps Next.js and attaches a Socket.IO server for realtime events
@@ -137,11 +141,5 @@ prisma/              # Prisma schema and migrations
 server.ts            # Custom Next.js + Socket.IO server entry point
 ```
 
-## Maintenance Notes
-- Some dependencies were inherited from the original scaffold. Periodically audit `package.json` to remove unused packages before building production images.
-- The repo includes `data/.gitkeep` so the database directory exists without committing SQLite files. Real database files under `data/` or `prisma/db/` are ignored by git.
-- Tailwind CSS 4 tooling is sensitive to version drift; if you regenerate the lockfile, pin `tailwindcss` and `@tailwindcss/postcss` to the tested versions (currently `4.1.12`).
-- Mixed storage: small files/images are stored inline (SQLite BLOB), large files under `data/uploads/` and streamed via `/api/files/:id`.
-
 ## License
-This project is a self-hosted Cloud Clipboard application.
+MIT  - Please refer to [LICENSE](LICENSE)
