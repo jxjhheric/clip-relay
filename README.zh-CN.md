@@ -16,7 +16,7 @@
 ## 架构概览
 - 前端：Next.js App Router（React 19），组件库 `src/app`, `src/components/ui`
 - 服务端：自定义入口 `server.ts`，挂载 Socket.IO 实时服务
-- 数据：SQLite + Prisma（`prisma/schema.prisma`, `src/lib/db.ts`）
+ - 数据：SQLite（better-sqlite3 + drizzle-orm，`src/lib/db.ts`, `src/lib/db/schema.ts`）
 - 认证：`/api/auth/verify` 验证口令，并写入会话 Cookie
 - 实时：`src/lib/socket.ts`, `src/lib/socket-events.ts`
 
@@ -31,10 +31,7 @@ npm ci
 ```
 
 ### 初始化数据库（首次）
-```bash
-npm run db:push
-```
-> 将 Prisma schema 同步到本地 SQLite 数据库。
+无需手动执行迁移。应用在首次启动时会检测并自动创建表结构（SQLite 文件为空时）。
 
 ### 启动开发服务
 ```bash
@@ -47,7 +44,7 @@ npm run dev
 npm run build
 npm start
 ```
-- `npm start` 会在启动前执行 `prisma db push` 以确保表结构存在。
+- `npm start` 直接启动服务；若 SQLite 文件为空，会在首次访问前自动创建表结构。
 - 监听端口 `8087`（可通过 `PORT` 覆盖）。
 
 ## 环境变量
@@ -57,17 +54,16 @@ npm start
 DATABASE_URL="file:../data/custom.db"
 CLIPBOARD_PASSWORD="change-me"
 ```
-- `DATABASE_URL` 指向 SQLite 数据库文件。相对路径相对于 `prisma/schema.prisma` 解析，因此 `file:../data/custom.db` 实际落在项目根目录的 `data/custom.db`（Docker 中为 `/app/data/custom.db`）。
-- 如果未设置 `DATABASE_URL`，程序会自动回退到 `file:<项目根>/data/custom.db`。
+- `DATABASE_URL` 指向 SQLite 数据库文件。支持 `file:相对或绝对路径` 或直接文件路径。不设置时默认使用项目根的 `./data/custom.db`。
 - `CLIPBOARD_PASSWORD` 为访问口令。前端会将口令存入会话；服务端中间件会校验请求头或 Cookie。
 
 ## Docker 部署
 ### 本地构建镜像
 ```bash
-# 完整镜像（包含 Prisma 生成）
+# 完整镜像
 docker build -t cloud-clipboard:latest -f Dockerfile .
 
-# 精简镜像（不包含初始化，体积更小）
+# 精简镜像（体积更小）
 docker build -t cloud-clipboard:slim -f Dockerfile.slim .
 ```
 
@@ -91,15 +87,7 @@ services:
 ```
 
 ### 首次初始化（仅 `:slim` 镜像）
-`slim` 镜像不会在启动时自动执行 `prisma db push`。如果挂载的是全新空卷，需先初始化一次：
-```bash
-docker run --rm \
-  -v /srv/cloud-clipboard/data:/app/data \
-  --env-file /srv/cloud-clipboard/.env \
-  <your-registry>/cloud-clipboard:latest \
-  npx prisma db push --skip-generate
-```
-或者先用 `:latest` 启动一次创建表，再切回 `:slim`。
+无需额外步骤。首次挂载空卷启动时，应用会自动创建表结构。
 
 ## 数据存储与备份
 - 数据库：`data/custom.db`（SQLite，含元数据与小文件 BLOB）
@@ -119,7 +107,7 @@ src/
 ├─ components/clipboard/ # 剪贴板业务组件
 ├─ hooks/            # 自定义 hooks（toast 等）
 └─ lib/              # 鉴权、数据库、socket、工具函数
-prisma/              # Prisma schema 与迁移
+src/lib/db/schema.ts # Drizzle SQLite 表结构定义
 server.ts            # 自定义 Next.js + Socket.IO 服务器入口
 ```
 

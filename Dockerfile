@@ -3,8 +3,7 @@ FROM node:20-alpine AS base
 
 WORKDIR /app
 
-# Install system dependencies required at runtime
-RUN apk add --no-cache openssl
+# No extra runtime system dependencies required
 
 # ---- Dependencies Stage ----
 FROM base AS deps
@@ -17,7 +16,6 @@ FROM deps AS builder
 
 COPY . .
 
-RUN npm run db:generate
 RUN npm run build
 
 # Remove development-only dependencies and caches
@@ -35,7 +33,7 @@ COPY --from=builder /app/package-lock.json ./package-lock.json
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
-COPY --from=builder /app/prisma ./prisma
+# Prisma schema not needed anymore
 COPY --from=builder /app/dist ./dist
 
 # The database file itself should be mounted as a volume,

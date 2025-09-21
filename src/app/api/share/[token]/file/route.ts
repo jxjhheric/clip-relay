@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, shareLinks, clipboardItems } from '@/lib/db';
+import { eq } from 'drizzle-orm';
 import path from 'path';
 import { createReadStream } from 'fs';
 import { promises as fs } from 'fs';
@@ -22,29 +23,26 @@ export async function GET(
 ) {
   const { token } = await params;
   try {
-    const share = await db.shareLink.findUnique({
-      where: { token },
-      select: {
-        token: true,
-        expiresAt: true,
-        maxDownloads: true,
-        downloadCount: true,
-        revoked: true,
-        passwordHash: true,
-        item: {
-          select: {
-            id: true,
-            type: true,
-            content: true,
-            fileName: true,
-            fileSize: true,
-            contentType: true,
-            filePath: true,
-            inlineData: true,
-          }
-        }
-      }
-    });
+    const [share] = await db
+      .select({
+        token: shareLinks.token,
+        expiresAt: shareLinks.expiresAt,
+        maxDownloads: shareLinks.maxDownloads,
+        downloadCount: shareLinks.downloadCount,
+        revoked: shareLinks.revoked,
+        passwordHash: shareLinks.passwordHash,
+        type: clipboardItems.type,
+        content: clipboardItems.content,
+        fileName: clipboardItems.fileName,
+        fileSize: clipboardItems.fileSize,
+        contentType: clipboardItems.contentType,
+        filePath: clipboardItems.filePath,
+        inlineData: clipboardItems.inlineData,
+      })
+      .from(shareLinks)
+      .leftJoin(clipboardItems, eq(shareLinks.itemId, clipboardItems.id))
+      .where(eq(shareLinks.token, token))
+      .limit(1);
 
     if (!isValid(share)) {
       return NextResponse.json({ error: 'not found' }, { status: 404 });
@@ -59,10 +57,10 @@ export async function GET(
     }
 
     // TEXT preview: inline as text/plain
-    const filename = share!.item.fileName || 'download';
-    const contentType = share!.item.contentType || 'application/octet-stream';
-    if (share!.item.type === 'TEXT') {
-      const text = share!.item.content ?? '';
+    const filename = share!.fileName || 'download';
+    const contentType = share!.contentType || 'application/octet-stream';
+    if (share!.type === 'TEXT') {
+      const text = share!.content ?? '';
       return new NextResponse(text, {
         headers: {
           'Content-Type': 'text/plain; charset=utf-8',
@@ -77,8 +75,8 @@ export async function GET(
     headers.set('Content-Type', contentType);
     headers.set('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(filename)}`);
 
-    if (share!.item.filePath) {
-      const absPath = path.join(process.cwd(), 'data', share!.item.filePath);
+    if (share!.filePath) {
+      const absPath = path.join(process.cwd(), 'data', share!.filePath);
       try {
         const stat = await fs.stat(absPath);
         headers.set('Content-Length', String(stat.size));
@@ -88,11 +86,10 @@ export async function GET(
       return new NextResponse(stream, { headers });
     }
 
-    if (share!.item.inlineData) {
-      const bytes = share!.item.inlineData as unknown as Uint8Array;
-      const ab = (bytes.buffer as ArrayBuffer).slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-      headers.set('Content-Length', String(bytes.byteLength));
-      return new NextResponse(ab, { headers });
+    if (share!.inlineData) {
+      const buf = share!.inlineData as unknown as Buffer;
+      headers.set('Content-Length', String(buf.byteLength));
+      return new NextResponse(buf, { headers });
     }
 
     return NextResponse.json({ error: 'missing content' }, { status: 404 });
@@ -100,4 +97,3 @@ export async function GET(
     return NextResponse.json({ error: 'failed' }, { status: 500 });
   }
 }
-

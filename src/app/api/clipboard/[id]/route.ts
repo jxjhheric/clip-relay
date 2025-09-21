@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, clipboardItems } from '@/lib/db';
+import { eq } from 'drizzle-orm';
 import { getIO } from '@/lib/socket';
 import { CLIPBOARD_DELETED_EVENT } from '@/lib/socket-events';
 import path from 'path';
@@ -12,20 +13,21 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const item = await db.clipboardItem.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        type: true,
-        content: true,
-        fileName: true,
-        fileSize: true,
-        contentType: true,
-        filePath: true,
-        createdAt: true,
-        updatedAt: true,
-      }
-    });
+    const [item] = await db
+      .select({
+        id: clipboardItems.id,
+        type: clipboardItems.type,
+        content: clipboardItems.content,
+        fileName: clipboardItems.fileName,
+        fileSize: clipboardItems.fileSize,
+        contentType: clipboardItems.contentType,
+        filePath: clipboardItems.filePath,
+        createdAt: clipboardItems.createdAt,
+        updatedAt: clipboardItems.updatedAt,
+      })
+      .from(clipboardItems)
+      .where(eq(clipboardItems.id, id))
+      .limit(1);
 
     if (!item) {
       return NextResponse.json(
@@ -51,13 +53,11 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const item = await db.clipboardItem.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        filePath: true,
-      }
-    });
+    const [item] = await db
+      .select({ id: clipboardItems.id, filePath: clipboardItems.filePath })
+      .from(clipboardItems)
+      .where(eq(clipboardItems.id, id))
+      .limit(1);
 
     if (!item) {
       return NextResponse.json(
@@ -66,7 +66,7 @@ export async function DELETE(
       );
     }
 
-    await db.clipboardItem.delete({ where: { id } });
+    await db.delete(clipboardItems).where(eq(clipboardItems.id, id));
 
     // Remove file from disk if exists
     if (item.filePath) {

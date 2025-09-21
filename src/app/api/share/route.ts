@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, clipboardItems, shareLinks } from '@/lib/db';
+import { eq, desc, and } from 'drizzle-orm';
 import crypto from 'crypto';
 
 type CreateShareBody = {
@@ -18,7 +19,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'itemId is required' }, { status: 400 });
     }
 
-    const item = await db.clipboardItem.findUnique({ where: { id: body.itemId } });
+    const [item] = await db
+      .select({ id: clipboardItems.id })
+      .from(clipboardItems)
+      .where(eq(clipboardItems.id, body.itemId))
+      .limit(1);
     if (!item) {
       return NextResponse.json({ error: 'Item not found' }, { status: 404 });
     }
@@ -45,15 +50,23 @@ export async function POST(request: NextRequest) {
       passwordHash = h.digest('hex');
     }
 
-    const share = await db.shareLink.create({
-      data: {
-        token,
-        itemId: item.id,
-        expiresAt: expiresAt ?? undefined,
-        maxDownloads: body.maxDownloads ?? undefined,
-        passwordHash,
-      },
+    await db.insert(shareLinks).values({
+      token,
+      itemId: item.id,
+      expiresAt: expiresAt ?? undefined,
+      maxDownloads: body.maxDownloads ?? undefined,
+      passwordHash,
     });
+    const [share] = await db
+      .select({
+        token: shareLinks.token,
+        expiresAt: shareLinks.expiresAt,
+        maxDownloads: shareLinks.maxDownloads,
+        passwordHash: shareLinks.passwordHash,
+      })
+      .from(shareLinks)
+      .where(eq(shareLinks.token, token))
+      .limit(1);
 
     return NextResponse.json({
       token: share.token,
@@ -83,32 +96,41 @@ export async function GET(request: NextRequest) {
     const baseWhere: any = { ...(itemId ? { itemId } : {}) };
     const prismaWhere = includeInvalid ? baseWhere : { ...baseWhere, revoked: false };
 
-    const sharesRaw = await db.shareLink.findMany({
-      where: prismaWhere,
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: pageSize + 1, // for hasMore
-      select: {
-        token: true,
-        itemId: true,
-        expiresAt: true,
-        maxDownloads: true,
-        downloadCount: true,
-        revoked: true,
-        passwordHash: true,
-        createdAt: true,
-        updatedAt: true,
-        item: {
-          select: {
-            id: true,
-            type: true,
-            fileName: true,
-            fileSize: true,
-            contentType: true,
-          }
-        },
-      },
-    });
+    let whereExpr: any = undefined;
+    const byItem = !!prismaWhere.itemId;
+    const byRevoked = Object.prototype.hasOwnProperty.call(prismaWhere, 'revoked') && prismaWhere.revoked === false;
+    if (byItem && byRevoked) {
+      whereExpr = and(eq(shareLinks.itemId, prismaWhere.itemId!), eq(shareLinks.revoked, false));
+    } else if (byItem) {
+      whereExpr = eq(shareLinks.itemId, prismaWhere.itemId!);
+    } else if (byRevoked) {
+      whereExpr = eq(shareLinks.revoked, false);
+    }
+
+    // Fetch page of shares with joined minimal item fields
+    const sharesRaw = await db
+      .select({
+        token: shareLinks.token,
+        itemId: shareLinks.itemId,
+        expiresAt: shareLinks.expiresAt,
+        maxDownloads: shareLinks.maxDownloads,
+        downloadCount: shareLinks.downloadCount,
+        revoked: shareLinks.revoked,
+        passwordHash: shareLinks.passwordHash,
+        createdAt: shareLinks.createdAt,
+        updatedAt: shareLinks.updatedAt,
+        itemIdJoin: clipboardItems.id,
+        itemType: clipboardItems.type,
+        itemFileName: clipboardItems.fileName,
+        itemFileSize: clipboardItems.fileSize,
+        itemContentType: clipboardItems.contentType,
+      })
+      .from(shareLinks)
+      .leftJoin(clipboardItems, eq(shareLinks.itemId, clipboardItems.id))
+      .where(whereExpr as any)
+      .orderBy(desc(shareLinks.createdAt))
+      .limit(pageSize + 1)
+      .offset(skip);
 
     const postFilter = (s: any) => {
       if (includeInvalid) return true;
@@ -122,7 +144,13 @@ export async function GET(request: NextRequest) {
     const pageItems = (hasMore ? filtered.slice(0, pageSize) : filtered).map((s) => ({
       token: s.token,
       url: `/s/${s.token}`,
-      item: s.item,
+      item: {
+        id: s.itemIdJoin,
+        type: s.itemType,
+        fileName: s.itemFileName,
+        fileSize: s.itemFileSize,
+        contentType: s.itemContentType,
+      },
       itemId: s.itemId,
       expiresAt: s.expiresAt,
       maxDownloads: s.maxDownloads,

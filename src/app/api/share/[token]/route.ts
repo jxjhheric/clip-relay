@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, shareLinks, clipboardItems } from '@/lib/db';
+import { eq } from 'drizzle-orm';
 
 function validateShare(share: any) {
   if (!share || share.revoked) return { ok: false, reason: 'revoked' };
@@ -23,59 +24,56 @@ export async function GET(
   const { token } = await params;
 
   try {
-    const share = await db.shareLink.findUnique({
-      where: { token },
-      select: {
-        token: true,
-        expiresAt: true,
-        maxDownloads: true,
-        downloadCount: true,
-        revoked: true,
-        passwordHash: true,
-        item: {
-          select: {
-            id: true,
-            type: true,
-            fileName: true,
-            fileSize: true,
-            contentType: true,
-            createdAt: true,
-            updatedAt: true,
-            // Do not include inlineData/content here
-            content: true,
-          },
-        },
-      },
-    });
+    const [row] = await db
+      .select({
+        token: shareLinks.token,
+        expiresAt: shareLinks.expiresAt,
+        maxDownloads: shareLinks.maxDownloads,
+        downloadCount: shareLinks.downloadCount,
+        revoked: shareLinks.revoked,
+        passwordHash: shareLinks.passwordHash,
+        itemId: clipboardItems.id,
+        itemType: clipboardItems.type,
+        itemFileName: clipboardItems.fileName,
+        itemFileSize: clipboardItems.fileSize,
+        itemContentType: clipboardItems.contentType,
+        itemCreatedAt: clipboardItems.createdAt,
+        itemUpdatedAt: clipboardItems.updatedAt,
+        itemContent: clipboardItems.content,
+      })
+      .from(shareLinks)
+      .leftJoin(clipboardItems, eq(shareLinks.itemId, clipboardItems.id))
+      .where(eq(shareLinks.token, token))
+      .limit(1);
 
-    const { ok, reason } = validateShare(share);
+    const { ok, reason } = validateShare(row);
     if (!ok) {
       return NextResponse.json({ error: reason ?? 'invalid' }, { status: 404 });
     }
 
-    const needsPassword = !!share?.passwordHash;
+    const needsPassword = !!row?.passwordHash;
     let authorized = !needsPassword;
     if (needsPassword) {
       const c = request.cookies.get(`share_auth_${token}`)?.value;
-      authorized = c === share?.passwordHash;
+      authorized = c === row?.passwordHash;
     }
 
     // Only expose content if TEXT and authorized; otherwise keep metadata minimal
     return NextResponse.json({
       token,
       item: {
-        id: share!.item.id,
-        type: share!.item.type,
-        fileName: share!.item.fileName,
-        fileSize: share!.item.fileSize,
-        contentType: share!.item.contentType,
-        content: authorized && share!.item.type === 'TEXT' ? share!.item.content : undefined,
-        createdAt: share!.item.createdAt,
-        updatedAt: share!.item.updatedAt,
+        id: row!.itemId,
+        type: row!.itemType,
+        fileName: row!.itemFileName,
+        fileSize: row!.itemFileSize,
+        contentType: row!.itemContentType,
+        content: authorized && row!.itemType === 'TEXT' ? row!.itemContent : undefined,
+        createdAt: row!.itemCreatedAt,
+        updatedAt: row!.itemUpdatedAt,
       },
-      expiresAt: share!.expiresAt,
-      maxDownloads: share!.maxDownloads,
-      downloadCount: share!.downloadCount,
+      expiresAt: row!.expiresAt,
+      maxDownloads: row!.maxDownloads,
+      downloadCount: row!.downloadCount,
       requiresPassword: needsPassword,
       authorized,
     });
@@ -91,9 +89,9 @@ export async function DELETE(
 ) {
   const { token } = await params;
   try {
-    const share = await db.shareLink.findUnique({ where: { token } });
+    const [share] = await db.select({ token: shareLinks.token }).from(shareLinks).where(eq(shareLinks.token, token)).limit(1);
     if (!share) return NextResponse.json({ error: 'not found' }, { status: 404 });
-    await db.shareLink.delete({ where: { token } });
+    await db.delete(shareLinks).where(eq(shareLinks.token, token));
     return NextResponse.json({ success: true });
   } catch (err) {
     return NextResponse.json({ error: 'failed to delete' }, { status: 500 });

@@ -5,7 +5,7 @@
 A self-hosted cloud clipboard for quickly sharing text snippets, files, and images across devices. The app is built with Next.js and provides realtime updates, drag-and-drop uploads, and lightweight authentication suitable for personal or small-team use.
 
 ## Features
-- Realtime clipboard synchronization via Socket.IO and Prisma
+- Realtime clipboard synchronization via Socket.IO and SQLite
 - Upload text, files, and pasted images with progress feedback
 - Drag-and-drop reordering powered by `@dnd-kit`
 - Full-text search across clipboard content and filenames
@@ -19,7 +19,7 @@ A self-hosted cloud clipboard for quickly sharing text snippets, files, and imag
 ## Architecture Overview
 - **Frontend**: Next.js App Router (React 19) with shadcn/ui component primitives and Tailwind CSS 4 for styling (`src/app`, `src/components/ui`)
 - **Server**: Custom Node entry (`server.ts`) bootstraps Next.js and attaches a Socket.IO server for realtime events
-- **Data**: SQLite managed through Prisma (`prisma/schema.prisma`, `src/lib/db.ts`)
+- **Data**: SQLite via better-sqlite3 + drizzle-orm (`src/lib/db.ts`, `src/lib/db/schema.ts`)
 - **Auth**: Minimal bearer password check handled in `src/app/api/auth/verify/route.ts`
 - **Realtime**: Websocket events broadcast create/delete actions (`src/lib/socket.ts`, `src/lib/socket-events.ts`)
 
@@ -45,7 +45,7 @@ The server uses `nodemon` + `tsx` to reload `server.ts`. Open http://localhost:8
 npm run build
 npm start
 ```
-`npm start` runs `prisma db push` before launching the custom server in production mode. The server listens on `PORT` (default 8087).
+`npm start` launches the custom server in production mode. Tables are created automatically on first start if the SQLite file is empty. The server listens on `PORT` (default 8087).
 
 ## Environment Variables
 Create a `.env` file based on the included example:
@@ -54,15 +54,15 @@ Create a `.env` file based on the included example:
 DATABASE_URL="file:../data/custom.db"
 CLIPBOARD_PASSWORD="change-me"
 ```
-- `DATABASE_URL` points Prisma to the SQLite database file. Relative paths are resolved from `prisma/schema.prisma`, so `file:../data/custom.db` maps to `data/custom.db` in the project root (and `/app/data/custom.db` inside Docker). If not set, the app falls back to `file:<project_root>/data/custom.db` automatically.
+- `DATABASE_URL` points to the SQLite database file. Supports `file:relative/or/absolute/path.db` or a plain file path. If not set, the app falls back to `./data/custom.db` automatically.
 - `CLIPBOARD_PASSWORD` controls access to the UI; users must enter the password once per session.
 
 ## Docker
 
 Two image variants are available:
 
-- `:latest` (default) — built from `Dockerfile`. Easiest to use; on container start it runs `prisma db push` to initialize the SQLite schema automatically. Best for new users and new environments.
-- `:slim` — built from `Dockerfile.slim`. Smaller and faster to pull. Does not run `db push` on start; first-time empty volume requires a one-time initialization.
+- `:latest` (default) — built from `Dockerfile`. Easiest to use.
+- `:slim` — built from `Dockerfile.slim`. Smaller and faster to pull. First-time empty volume is auto-initialized at runtime.
 
 ### Build locally
 ```bash
@@ -109,18 +109,7 @@ services:
 ```
 
 #### First-time init note for `:slim`
-If you use the `:slim` image on a brand-new empty volume, initialize the DB schema once (choose one):
-
-1) Use the `:latest` image to run a one-shot init, then switch back to `:slim`:
-```bash
-docker run --rm \
-  -v /srv/cloud-clipboard/data:/app/data \
-  --env-file /srv/cloud-clipboard/.env \
-  $REGISTRY/$NAMESPACE/cloud-clipboard:latest \
-  npx prisma db push --skip-generate
-```
-
-2) Temporarily start with `:latest` using your compose to create tables, stop it, then change the image tag to `:slim` and start again.
+No manual step is needed anymore. The app creates tables on first start when the SQLite file is empty.
 
 ## CI / Workflow
 
@@ -137,7 +126,7 @@ src/
 ├─ components/ui/    # Reusable shadcn/ui wrappers
 ├─ hooks/            # Custom hooks (toast, mobile detection)
 └─ lib/              # Auth, DB, socket helpers, util functions
-prisma/              # Prisma schema and migrations
+src/lib/db/schema.ts # Drizzle ORM schema (SQLite)
 server.ts            # Custom Next.js + Socket.IO server entry point
 ```
 

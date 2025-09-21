@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, shareLinks } from '@/lib/db';
+import { eq } from 'drizzle-orm';
 import crypto from 'crypto';
 
 export async function POST(
@@ -11,7 +12,7 @@ export async function POST(
     const { password } = await request.json();
     if (!password) return NextResponse.json({ error: 'password required' }, { status: 400 });
 
-    const share = await db.shareLink.findUnique({ where: { token } });
+    const [share] = await db.select().from(shareLinks).where(eq(shareLinks.token, token)).limit(1);
     if (!share) return NextResponse.json({ error: 'not found' }, { status: 404 });
     if (share.revoked) return NextResponse.json({ error: 'revoked' }, { status: 404 });
     if (share.expiresAt && new Date(share.expiresAt).getTime() < Date.now()) {

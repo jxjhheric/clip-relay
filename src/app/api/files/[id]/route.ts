@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
-import { db } from '@/lib/db';
+import { db, clipboardItems } from '@/lib/db';
+import { eq } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 import path from 'path';
 import { createReadStream } from 'fs';
@@ -18,16 +19,17 @@ export async function GET(
       (searchParams.get('download') || '').toLowerCase()
     );
 
-    const item = await db.clipboardItem.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        filePath: true,
-        inlineData: true,
-        fileName: true,
-        contentType: true,
-      },
-    });
+    const [item] = await db
+      .select({
+        id: clipboardItems.id,
+        filePath: clipboardItems.filePath,
+        inlineData: clipboardItems.inlineData,
+        fileName: clipboardItems.fileName,
+        contentType: clipboardItems.contentType,
+      })
+      .from(clipboardItems)
+      .where(eq(clipboardItems.id, id))
+      .limit(1);
 
     if (!item) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -57,14 +59,10 @@ export async function GET(
     }
 
     if (item.inlineData) {
-      const bytes = item.inlineData as unknown as Uint8Array;
-      const ab = (bytes.buffer as ArrayBuffer).slice(
-        bytes.byteOffset,
-        bytes.byteOffset + bytes.byteLength
-      );
-      headers.set('Content-Length', String(bytes.byteLength));
+      const buf = item.inlineData as unknown as Buffer;
+      headers.set('Content-Length', String(buf.byteLength));
       headers.set('Content-Type', contentType);
-      return new NextResponse(ab, { headers });
+      return new NextResponse(buf, { headers });
     }
 
     return NextResponse.json({ error: 'File content missing' }, { status: 404 });

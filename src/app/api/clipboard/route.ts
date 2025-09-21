@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, clipboardItems } from '@/lib/db';
 import { getIO, CLIPBOARD_CREATED_EVENT } from '@/lib/socket';
 import { promises as fs } from 'fs';
 import { createWriteStream } from 'fs';
@@ -7,6 +7,7 @@ import path from 'path';
 import { randomUUID } from 'crypto';
 import { Readable, pipeline } from 'stream';
 import { promisify } from 'util';
+import { and, or, like, lt, eq, desc } from 'drizzle-orm';
 
 const pump = promisify(pipeline);
 
@@ -19,35 +20,43 @@ export async function GET(request: NextRequest) {
     const cursorCreatedAt = searchParams.get('cursorCreatedAt');
     const cursorId = searchParams.get('cursorId');
 
-    const andConds: any[] = [];
+    const conds: any[] = [];
     if (search) {
-      andConds.push({ OR: [ { content: { contains: search } }, { fileName: { contains: search } } ] });
+      conds.push(
+        or(
+          like(clipboardItems.content, `%${search}%`),
+          like(clipboardItems.fileName, `%${search}%`)
+        )
+      );
     }
     if (cursorId && cursorCreatedAt) {
       const cursorDate = new Date(cursorCreatedAt);
       if (!isNaN(cursorDate.getTime())) {
-        andConds.push({ OR: [ { createdAt: { lt: cursorDate } }, { AND: [ { createdAt: cursorDate }, { id: { lt: cursorId } } ] } ] });
+        conds.push(
+          or(
+            lt(clipboardItems.createdAt, cursorDate),
+            and(eq(clipboardItems.createdAt, cursorDate), lt(clipboardItems.id, cursorId))
+          )
+        );
       }
     }
-    const where: any = andConds.length ? { AND: andConds } : {};
 
-    const rows = await db.clipboardItem.findMany({
-      where,
-      select: {
-        id: true,
-        type: true,
-        content: true,
-        fileName: true,
-        fileSize: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-      orderBy: [
-        { createdAt: 'desc' },
-        { id: 'desc' },
-      ],
-      take: take + 1,
-    });
+    const whereExpr = conds.length ? and(...conds) : undefined;
+
+    const rows = await db
+      .select({
+        id: clipboardItems.id,
+        type: clipboardItems.type,
+        content: clipboardItems.content,
+        fileName: clipboardItems.fileName,
+        fileSize: clipboardItems.fileSize,
+        createdAt: clipboardItems.createdAt,
+        updatedAt: clipboardItems.updatedAt,
+      })
+      .from(clipboardItems)
+      .where(whereExpr as any)
+      .orderBy(desc(clipboardItems.createdAt), desc(clipboardItems.id))
+      .limit(take + 1);
 
     const hasMore = rows.length > take;
     const items = hasMore ? rows.slice(0, take) : rows;
@@ -115,17 +124,29 @@ export async function POST(request: NextRequest) {
         await pump(nodeStream, createWriteStream(absPath));
         filePathRel = path.join('uploads', fileBaseName).replace(/\\/g, '/');
 
-        const newItemFS = await db.clipboardItem.create({
-          data: {
-            id,
-            type,
-            content,
-            fileName,
-            fileSize,
-            contentType,
-            filePath: filePathRel,
-          },
+        await db.insert(clipboardItems).values({
+          id,
+          type,
+          content,
+          fileName,
+          fileSize,
+          contentType,
+          filePath: filePathRel,
         });
+
+        const [newItemFS] = await db
+          .select({
+            id: clipboardItems.id,
+            type: clipboardItems.type,
+            content: clipboardItems.content,
+            fileName: clipboardItems.fileName,
+            fileSize: clipboardItems.fileSize,
+            createdAt: clipboardItems.createdAt,
+            updatedAt: clipboardItems.updatedAt,
+          })
+          .from(clipboardItems)
+          .where(eq(clipboardItems.id, id))
+          .limit(1);
 
         const io = getIO();
         const createdBroadcast = {
@@ -144,17 +165,30 @@ export async function POST(request: NextRequest) {
     }
 
     // Inline or text-only create
-    const newItem = await db.clipboardItem.create({
-      data: {
-        type,
-        content,
-        fileName,
-        fileSize,
-        contentType,
-        inlineData,
-        filePath: filePathRel,
-      },
+    const id = randomUUID();
+    await db.insert(clipboardItems).values({
+      id,
+      type,
+      content,
+      fileName,
+      fileSize,
+      contentType,
+      inlineData,
+      filePath: filePathRel,
     });
+    const [newItem] = await db
+      .select({
+        id: clipboardItems.id,
+        type: clipboardItems.type,
+        content: clipboardItems.content,
+        fileName: clipboardItems.fileName,
+        fileSize: clipboardItems.fileSize,
+        createdAt: clipboardItems.createdAt,
+        updatedAt: clipboardItems.updatedAt,
+      })
+      .from(clipboardItems)
+      .where(eq(clipboardItems.id, id))
+      .limit(1);
 
     // WebSocket: 广播创建事件
     const io = getIO();
