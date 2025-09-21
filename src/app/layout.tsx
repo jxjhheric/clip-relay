@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Cloud Clipboard",
   description: "Self-hosted cloud clipboard for text, files and images with realtime sync.",
-  keywords: ["Cloud Clipboard", "Next.js", "TypeScript", "Tailwind CSS", "shadcn/ui", "Socket.IO"],
+  keywords: ["Cloud Clipboard", "Next.js", "TypeScript", "Tailwind CSS", "shadcn/ui", "SSE"],
   authors: [{ name: "Cloud Clipboard" }],
   icons: {
     icon: [

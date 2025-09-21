@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, clipboardItems } from '@/lib/db';
 import { eq } from 'drizzle-orm';
-import { getIO } from '@/lib/socket';
 import { CLIPBOARD_DELETED_EVENT } from '@/lib/socket-events';
+import { sseBroadcast } from '@/lib/sse';
 import path from 'path';
 import { promises as fs } from 'fs';
 
@@ -78,9 +78,8 @@ export async function DELETE(
       }
     }
 
-    // WebSocket: 广播删除事件
-    const io = getIO();
-    io?.emit(CLIPBOARD_DELETED_EVENT, { id });
+    // SSE: 广播删除事件
+    sseBroadcast(CLIPBOARD_DELETED_EVENT, { id });
     
     return NextResponse.json({ message: 'Clipboard item deleted successfully' });
   } catch (error) {

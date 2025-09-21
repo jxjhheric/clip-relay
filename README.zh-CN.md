@@ -4,7 +4,7 @@
 
 一个自托管的云剪贴板应用，用于在设备间快速分享文本、图片和文件。基于 Next.js 构建，支持实时同步、拖拽上传和轻量认证，适合个人或小团队使用。
 
-- 实时同步：通过 Socket.IO 广播新建/删除事件
+- 实时同步：通过 SSE（Server-Sent Events）广播新建/删除事件
 - 拖拽上传：小文件内联存储，大文件落地到磁盘
 - 轻量认证：单一访问口令，浏览器会话内记住
 - 响应式 UI：基于 shadcn/ui 与 Tailwind CSS 4
@@ -15,10 +15,10 @@
 
 ## 架构概览
 - 前端：Next.js App Router（React 19），组件库 `src/app`, `src/components/ui`
-- 服务端：自定义入口 `server.ts`，挂载 Socket.IO 实时服务
+- 服务端：自定义入口 `server.ts`，通过 `/api/events` 提供 SSE 实时通道
  - 数据：SQLite（better-sqlite3 + drizzle-orm，`src/lib/db.ts`, `src/lib/db/schema.ts`）
 - 认证：`/api/auth/verify` 验证口令，并写入会话 Cookie
-- 实时：`src/lib/socket.ts`, `src/lib/socket-events.ts`
+- 实时：`src/app/api/events/route.ts`, `src/lib/socket-events.ts`
 
 ## 快速开始（本地开发）
 ### 依赖
@@ -106,9 +106,9 @@ src/
 ├─ components/ui/    # 可复用 UI 组件封装
 ├─ components/clipboard/ # 剪贴板业务组件
 ├─ hooks/            # 自定义 hooks（toast 等）
-└─ lib/              # 鉴权、数据库、socket、工具函数
+└─ lib/              # 鉴权、数据库、SSE、工具函数
 src/lib/db/schema.ts # Drizzle SQLite 表结构定义
-server.ts            # 自定义 Next.js + Socket.IO 服务器入口
+server.ts            # 自定义 Next.js 服务器入口（SSE 实时）
 ```
 
 ## 许可证

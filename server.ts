@@ -1,9 +1,7 @@
-// server.ts - Next.js Standalone + Socket.IO
-import { setupSocket, setIO, getIO } from './src/lib/socket';
+// server.ts - Next.js Standalone
 import { createServer } from 'http';
 import { promises as fsp } from 'fs';
 import path from 'path';
-import { Server } from 'socket.io';
 // Load Next from standalone bundle path in production (slim image),
 // and fall back to regular 'next' for local/dev environments.
 function loadNext() {
@@ -30,7 +28,7 @@ const dev = process.env.NODE_ENV !== 'production';
 const currentPort = Number(process.env.PORT) || 8087;
 const hostname = '0.0.0.0';
 
-// Custom server with Socket.IO integration
+// Custom server
 async function createCustomServer() {
   try {
     // Create Next.js app
@@ -54,32 +52,16 @@ async function createCustomServer() {
       console.warn('Warning: failed to ensure data/uploads directories:', e);
     }
 
-    // Create HTTP server that will handle both Next.js and Socket.IO
+    // Create HTTP server that delegates all requests to Next.js
     const server = createServer((req, res) => {
-      // Skip socket.io requests from Next.js handler
-      if (req.url?.startsWith('/api/socketio')) {
-        return;
-      }
       handle(req, res);
     });
-
-    // Setup or reuse Socket.IO
-    let io = getIO();
-    if (!io) {
-      io = new Server(server, {
-        path: '/api/socketio',
-        // 不配置 CORS，默认仅同源可用；跨域将被浏览器拦截
-      });
-      // make io accessible in API routes
-      setIO(io);
-      setupSocket(io);
-    }
 
     // Start the server
     server.listen(currentPort, hostname, () => {
       console.log(`> Ready on http://${hostname}:${currentPort}`);
       console.log(`> Open http://localhost:${currentPort} in your browser`);
-      console.log(`> Socket.IO at ws://localhost:${currentPort}/api/socketio`);
+      console.log(`> SSE at http://localhost:${currentPort}/api/events`);
     });
 
   } catch (err) {

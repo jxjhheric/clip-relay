@@ -17,7 +17,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
-import { authFetch, verifyPassword, clearPassword, getStoredPassword } from '@/lib/auth';
+import { authFetch, verifyPassword, clearPassword } from '@/lib/auth';
 import { CLIPBOARD_CREATED_EVENT, CLIPBOARD_DELETED_EVENT } from '@/lib/socket-events';
 import type { ClipboardItem as GridItem } from '@/components/clipboard/ClipboardGrid';
 
@@ -159,28 +159,26 @@ export default function Home() {
     }
   }, [authenticated]);
 
-  // WebSocket 实时同步：监听创建与删除事件（动态导入 socket.io-client）
+  // SSE 实时同步：监听创建与删除事件
   useEffect(() => {
     if (!authenticated) return;
-    let socketInstance: any;
-    (async () => {
-      const { io } = await import('socket.io-client');
-      socketInstance = io({
-        path: '/api/socketio',
-        auth: { token: getStoredPassword() ?? '' },
-      });
-      socketInstance.on(CLIPBOARD_CREATED_EVENT, (newItem: ClipboardItem) => {
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource('/api/events');
+      es.addEventListener(CLIPBOARD_CREATED_EVENT, (ev: MessageEvent) => {
+        const newItem = JSON.parse((ev as MessageEvent).data) as ClipboardItem;
         if (searchTermRef.current) {
           fetchItems(searchTermRef.current);
         } else {
           setItems(prev => (prev.find(i => i.id === newItem.id) ? prev : [newItem, ...prev]));
         }
       });
-      socketInstance.on(CLIPBOARD_DELETED_EVENT, ({ id }: { id: string }) => {
+      es.addEventListener(CLIPBOARD_DELETED_EVENT, (ev: MessageEvent) => {
+        const { id } = JSON.parse((ev as MessageEvent).data) as { id: string };
         setItems(prev => prev.filter(i => i.id !== id));
       });
-    })();
-    return () => { try { socketInstance?.disconnect(); } catch {} };
+    } catch {}
+    return () => { try { es?.close(); } catch {} };
   }, [authenticated]);
 
   const copyToClipboard = async (content: string) => {

@@ -49,7 +49,7 @@ COPY --from=builder /app/dist ./dist
 # Ensure uploads dir exists (safe if already copied)
 RUN mkdir -p /app/data /app/data/uploads
 
-# Socket.IO and its deps are bundled into dist/server.js via esbuild.
+# Realtime is provided via SSE; no Socket.IO runtime needed.
 
 # Overlay Next compiled vendor modules (e.g., webpack) that are referenced at runtime
 # but may be pruned in the minimal standalone bundle. This is much smaller than

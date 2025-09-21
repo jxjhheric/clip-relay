@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, clipboardItems } from '@/lib/db';
-import { getIO, CLIPBOARD_CREATED_EVENT } from '@/lib/socket';
+import { CLIPBOARD_CREATED_EVENT } from '@/lib/socket-events';
+import { sseBroadcast } from '@/lib/sse';
 import { promises as fs } from 'fs';
 import { createWriteStream } from 'fs';
 import path from 'path';
@@ -148,7 +149,6 @@ export async function POST(request: NextRequest) {
           .where(eq(clipboardItems.id, id))
           .limit(1);
 
-        const io = getIO();
         const createdBroadcast = {
           id: newItemFS.id,
           type: newItemFS.type,
@@ -158,7 +158,7 @@ export async function POST(request: NextRequest) {
           createdAt: newItemFS.createdAt,
           updatedAt: newItemFS.updatedAt,
         };
-        io?.emit(CLIPBOARD_CREATED_EVENT, createdBroadcast);
+        sseBroadcast(CLIPBOARD_CREATED_EVENT, createdBroadcast);
 
         return NextResponse.json(newItemFS, { status: 201 });
       }
@@ -191,7 +191,6 @@ export async function POST(request: NextRequest) {
       .limit(1);
 
     // WebSocket: 广播创建事件
-    const io = getIO();
     const createdBroadcast = {
       id: newItem.id,
       type: newItem.type,
@@ -201,7 +200,7 @@ export async function POST(request: NextRequest) {
       createdAt: newItem.createdAt,
       updatedAt: newItem.updatedAt,
     };
-    io?.emit(CLIPBOARD_CREATED_EVENT, createdBroadcast);
+    sseBroadcast(CLIPBOARD_CREATED_EVENT, createdBroadcast);
 
     return NextResponse.json(newItem, { status: 201 });
   } catch (error) {

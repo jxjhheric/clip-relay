@@ -5,7 +5,7 @@
 A self-hosted cloud clipboard for quickly sharing text snippets, files, and images across devices. The app is built with Next.js and provides realtime updates, drag-and-drop uploads, and lightweight authentication suitable for personal or small-team use.
 
 ## Features
-- Realtime clipboard synchronization via Socket.IO and SQLite
+- Realtime clipboard synchronization via SSE (Server-Sent Events) and SQLite
 - Upload text, files, and pasted images with progress feedback
 - Drag-and-drop reordering powered by `@dnd-kit`
 - Full-text search across clipboard content and filenames
@@ -18,10 +18,10 @@ A self-hosted cloud clipboard for quickly sharing text snippets, files, and imag
 
 ## Architecture Overview
 - **Frontend**: Next.js App Router (React 19) with shadcn/ui component primitives and Tailwind CSS 4 for styling (`src/app`, `src/components/ui`)
-- **Server**: Custom Node entry (`server.ts`) bootstraps Next.js and attaches a Socket.IO server for realtime events
+- **Server**: Custom Node entry (`server.ts`) bootstraps Next.js; realtime events via SSE at `/api/events`
 - **Data**: SQLite via better-sqlite3 + drizzle-orm (`src/lib/db.ts`, `src/lib/db/schema.ts`)
 - **Auth**: Minimal bearer password check handled in `src/app/api/auth/verify/route.ts`
-- **Realtime**: Websocket events broadcast create/delete actions (`src/lib/socket.ts`, `src/lib/socket-events.ts`)
+- **Realtime**: SSE events broadcast create/delete actions (`src/app/api/events/route.ts`, `src/lib/socket-events.ts`)
 
 ## Getting Started
 ### Prerequisites
@@ -127,7 +127,7 @@ src/
 ├─ hooks/            # Custom hooks (toast, mobile detection)
 └─ lib/              # Auth, DB, socket helpers, util functions
 src/lib/db/schema.ts # Drizzle ORM schema (SQLite)
-server.ts            # Custom Next.js + Socket.IO server entry point
+server.ts            # Custom Next.js server entry point (SSE realtime)
 ```
 
 ## License
