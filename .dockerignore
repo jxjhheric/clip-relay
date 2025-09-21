@@ -13,6 +13,7 @@ node_modules
 
 # Build artifacts
 .next
+dist
 npm-debug.log
 *.tsbuildinfo
 

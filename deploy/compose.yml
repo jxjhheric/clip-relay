@@ -1,0 +1,27 @@
+version: "3.9"
+
+# Quick-start Compose for Cloud Clipboard
+# 1) Copy this file to your server (e.g., /srv/cloud-clipboard/compose.yml)
+# 2) Create .env alongside with DATABASE_URL and CLIPBOARD_PASSWORD
+# 3) Choose the image tag: prefer sha-<commit> for reproducible deploys
+
+services:
+  app:
+    # Replace with your registry and namespace
+    # Examples:
+    #   ghcr.io/OWNER/REPO/cloud-clipboard:sha-<GITHUB_SHA>
+    #   ghcr.io/OWNER/REPO/cloud-clipboard:latest
+    #   ghcr.io/OWNER/REPO/cloud-clipboard:slim-<GITHUB_SHA>
+    image: REGISTRY/NAMESPACE/cloud-clipboard:latest
+    ports:
+      - "8087:8087"
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    pull_policy: always
+
+# .env example:
+# DATABASE_URL="file:../data/custom.db"
+# CLIPBOARD_PASSWORD="change-me"
+

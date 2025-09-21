@@ -1033,10 +1033,12 @@ function ItemDetailDialog({
                 <span className="text-sm font-medium">创建时间:</span>
                 <span className="text-sm">{new Date(item.createdAt).toLocaleString('zh-CN')}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-sm font-medium">更新时间:</span>
-                <span className="text-sm">{new Date(item.updatedAt).toLocaleString('zh-CN')}</span>
-              </div>
+              {item.updatedAt !== item.createdAt && (
+                <div className="flex justify-between">
+                  <span className="text-sm font-medium">更新时间:</span>
+                  <span className="text-sm">{new Date(item.updatedAt).toLocaleString('zh-CN')}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-sm font-medium">ID:</span>
                 <span className="text-sm font-mono">{item.id}</span>
