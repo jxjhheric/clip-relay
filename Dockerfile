@@ -9,7 +9,8 @@ WORKDIR /app
 FROM base AS deps
 
 COPY package.json package-lock.json ./
-RUN npm ci --include=dev
+RUN apk add --no-cache python3 make g++ \
+ && npm install --include=dev
 
 # ---- Builder Stage ----
 FROM deps AS builder

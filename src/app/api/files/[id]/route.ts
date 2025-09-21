@@ -62,7 +62,8 @@ export async function GET(
       const buf = item.inlineData as unknown as Buffer;
       headers.set('Content-Length', String(buf.byteLength));
       headers.set('Content-Type', contentType);
-      return new NextResponse(buf, { headers });
+      // Use Uint8Array to satisfy NextResponse BodyInit typing
+      return new NextResponse(new Uint8Array(buf), { headers });
     }
 
     return NextResponse.json({ error: 'File content missing' }, { status: 404 });

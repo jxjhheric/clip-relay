@@ -9,8 +9,9 @@ WORKDIR /app
 FROM base AS deps
 
 COPY package.json package-lock.json ./
-# Install all deps (incl. dev) to build
-RUN npm ci --include=dev
+# Install native build tools for better-sqlite3, then install deps (incl. dev)
+RUN apk add --no-cache python3 make g++ \
+ && npm install --include=dev
 
 # ---- Builder Stage ----
 FROM deps AS builder

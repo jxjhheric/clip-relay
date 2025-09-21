@@ -89,7 +89,7 @@ export async function GET(
     if (share!.inlineData) {
       const buf = share!.inlineData as unknown as Buffer;
       headers.set('Content-Length', String(buf.byteLength));
-      return new NextResponse(buf, { headers });
+      return new NextResponse(new Uint8Array(buf), { headers });
     }
 
     return NextResponse.json({ error: 'missing content' }, { status: 404 });
