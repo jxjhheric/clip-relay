@@ -1,5 +1,7 @@
 # Cloud Clipboard
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 A self-hosted cloud clipboard for quickly sharing text snippets, files, and images across devices. The app is built with Next.js and provides realtime updates, drag-and-drop uploads, and lightweight authentication suitable for personal or small-team use.
 
 ## Features
@@ -9,8 +11,6 @@ A self-hosted cloud clipboard for quickly sharing text snippets, files, and imag
 - Full-text search across clipboard content and filenames
 - Optional password gate stored in sessionStorage
 - Responsive UI built from shadcn/ui components and Tailwind CSS 4
-
-[简体中文文档](README.zh-CN.md)
 
 ## Architecture Overview
 - **Frontend**: Next.js App Router (React 19) with shadcn/ui component primitives and Tailwind CSS 4 for styling (`src/app`, `src/components/ui`)
