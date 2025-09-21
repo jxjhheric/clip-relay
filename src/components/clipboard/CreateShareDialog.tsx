@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { authFetch } from "@/lib/auth";
+import { safeCopyText } from "@/lib/copy";
 
 export default function CreateShareDialog({
   itemId,
@@ -101,10 +102,9 @@ export default function CreateShareDialog({
                   <Input readOnly value={shareUrl} />
                   <Button
                     onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(shareUrl!);
-                        toast({ title: "已复制链接" });
-                      } catch {}
+                      const ok = await safeCopyText(shareUrl!);
+                      if (ok) toast({ title: "已复制链接" });
+                      else toast({ title: "复制失败", description: "浏览器限制或权限不足，请手动复制", variant: "destructive" });
                     }}
                   >
                     复制
@@ -122,4 +122,3 @@ export default function CreateShareDialog({
     </Dialog>
   );
 }
-

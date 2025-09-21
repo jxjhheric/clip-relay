@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { authFetch } from "@/lib/auth";
+import { safeCopyText } from "@/lib/copy";
 
 export default function ShareManagerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const { toast } = useToast();
@@ -74,10 +75,10 @@ export default function ShareManagerDialog({ open, onOpenChange }: { open: boole
   };
 
   const copy = async (url: string) => {
-    try {
-      await navigator.clipboard.writeText((window?.location?.origin || "") + url);
-      toast({ title: "已复制" });
-    } catch {}
+    const full = (window?.location?.origin || "") + url;
+    const ok = await safeCopyText(full);
+    if (ok) toast({ title: "已复制" });
+    else toast({ title: "复制失败", description: "浏览器限制或权限不足，请手动复制", variant: "destructive" });
   };
 
   const expired = (s: any) => s.expiresAt && new Date(s.expiresAt).getTime() < Date.now();
@@ -173,4 +174,3 @@ export default function ShareManagerDialog({ open, onOpenChange }: { open: boole
     </Dialog>
   );
 }
-
