@@ -41,6 +41,9 @@ export async function GET(
       'Content-Disposition',
       `${wantDownload ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(filename)}`
     );
+    // Add short caching to improve repeat preview performance for authenticated users
+    // Keep it private to avoid shared caching on proxies.
+    headers.set('Cache-Control', 'private, max-age=60, stale-while-revalidate=300');
 
     if (item.filePath) {
       const absPath = path.join(process.cwd(), 'data', item.filePath);

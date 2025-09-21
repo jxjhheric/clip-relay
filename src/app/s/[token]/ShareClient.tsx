@@ -145,7 +145,13 @@ export default function ShareClient({ token }: { token: string }) {
 
           {meta.item.type === 'IMAGE' && (
             <div>
-              <img src={`/api/share/${token}/file`} alt={meta.item.fileName || 'image'} className="max-h-[60vh] rounded" />
+              <img
+                src={`/api/share/${token}/file`}
+                alt={meta.item.fileName || 'image'}
+                className="max-h-[60vh] rounded"
+                loading="lazy"
+                decoding="async"
+              />
               <div className="mt-2 text-sm text-muted-foreground">
                 {meta.item.fileName} {fileSize(meta.item.fileSize)}
               </div>
@@ -168,4 +174,3 @@ export default function ShareClient({ token }: { token: string }) {
     </div>
   );
 }
-

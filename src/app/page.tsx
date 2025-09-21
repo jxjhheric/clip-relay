@@ -1,15 +1,11 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
-import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
+import dynamic from 'next/dynamic';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Search, Plus, Copy, Trash2, Share2, FileText, Image as ImageIcon, File as FileIcon } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { FileText, Search } from 'lucide-react';
 import { 
   AlertDialog,
   AlertDialogAction,
@@ -19,25 +15,19 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { Progress } from '@/components/ui/progress';
-import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { authFetch, verifyPassword, clearPassword, getAuthHeaders, getStoredPassword } from '@/lib/auth';
-import axios from 'axios';
-import { io } from 'socket.io-client';
+import { authFetch, verifyPassword, clearPassword, getStoredPassword } from '@/lib/auth';
 import { CLIPBOARD_CREATED_EVENT, CLIPBOARD_DELETED_EVENT } from '@/lib/socket-events';
+import type { ClipboardItem as GridItem } from '@/components/clipboard/ClipboardGrid';
 
-interface ClipboardItem {
-  id: string;
-  type: 'TEXT' | 'IMAGE' | 'FILE';
-  content?: string;
-  fileName?: string;
-  fileSize?: number;
-  createdAt: string;
-  updatedAt: string;
-}
+const ClipboardGrid = dynamic(() => import('@/components/clipboard/ClipboardGrid'), { ssr: false });
+const AddItemDialog = dynamic(() => import('@/components/clipboard/AddItemDialog'), { ssr: false });
+const ItemDetailDialog = dynamic(() => import('@/components/clipboard/ItemDetailDialog'), { ssr: false });
+const ShareManagerDialog = dynamic(() => import('@/components/clipboard/ShareManagerDialog'), { ssr: false });
+const CreateShareDialog = dynamic(() => import('@/components/clipboard/CreateShareDialog'), { ssr: false });
+
+type ClipboardItem = GridItem;
 
 export default function Home() {
   const [items, setItems] = useState<ClipboardItem[]>([]);
@@ -46,6 +36,10 @@ export default function Home() {
   const [selectedItem, setSelectedItem] = useState<ClipboardItem | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
   const [shareMgrOpen, setShareMgrOpen] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [shareItemId, setShareItemId] = useState<string | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
   const [nextCursor, setNextCursor] = useState<{ id: string; createdAt: string } | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const { toast } = useToast();
@@ -56,34 +50,16 @@ export default function Home() {
     searchTermRef.current = searchTerm;
   }, [searchTerm]);
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        delay: 100,
-        tolerance: 8,
-      },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
-  );
-
-  function handleDragEnd(event: any) {
-    const { active, over } = event;
-    if (!over) return;
-
-    if (active.id !== over.id) {
-      setItems((items) => {
-        const oldIndex = items.findIndex((item) => item.id === active.id);
-        const newIndex = items.findIndex((item) => item.id === over.id);
-        return arrayMove(items, oldIndex, newIndex);
-      });
-    }
-  }
+  // DnD moved into ClipboardGrid
 
   // 首次加载清除残留密码，避免自动登录
   useEffect(() => {
     clearPassword();
+  }, []);
+
+  // 预加载详情弹窗组件，避免首次点击时的分包加载延迟
+  useEffect(() => {
+    import('@/components/clipboard/ItemDetailDialog').catch(() => {});
   }, []);
 
   // 获取剪贴板条目数据
@@ -146,7 +122,7 @@ export default function Home() {
     }
   };
 
-  // 打开详情：按需拉取详情（文件通过 /api/files/:id 流式获取）
+  // 打开详情：先用现有列表数据即时打开，再并发拉取最新详情
   const openItemById = async (id: string) => {
     try {
       const res = await authFetch(`/api/clipboard/${id}`);
@@ -169,43 +145,42 @@ export default function Home() {
     }
   };
 
+  // 点击卡片时，优先显示已有数据，提升响应速度
+  const handleSelectItem = (id: string) => {
+    const local = items.find(i => i.id === id) || null;
+    if (local) setSelectedItem(local);
+    // 后台刷新详情（含 contentType/filePath 等）
+    openItemById(id);
+  };
+
   useEffect(() => {
     if (authenticated) {
       fetchItems(); // 初始加载
     }
-  }, [toast, authenticated]);
+  }, [authenticated]);
 
-  // WebSocket 实时同步：监听创建与删除事件
+  // WebSocket 实时同步：监听创建与删除事件（动态导入 socket.io-client）
   useEffect(() => {
     if (!authenticated) return;
-
-    const socketInstance = io({
-      path: '/api/socketio',
-      auth: {
-        token: getStoredPassword() ?? '',
-      },
-    });
-
-    socketInstance.on(CLIPBOARD_CREATED_EVENT, (newItem: ClipboardItem) => {
-      // 若当前处于搜索模式，直接重新拉取保证过滤逻辑一致
-      if (searchTermRef.current) {
-        fetchItems(searchTermRef.current);
-      } else {
-        // 非搜索状态下，前置插入（与后端 createdAt desc 排序一致）
-        setItems(prev => {
-          if (prev.find(i => i.id === newItem.id)) return prev;
-          return [newItem, ...prev];
-        });
-      }
-    });
-
-    socketInstance.on(CLIPBOARD_DELETED_EVENT, ({ id }: { id: string }) => {
-      setItems(prev => prev.filter(i => i.id !== id));
-    });
-
-    return () => {
-      socketInstance.disconnect();
-    };
+    let socketInstance: any;
+    (async () => {
+      const { io } = await import('socket.io-client');
+      socketInstance = io({
+        path: '/api/socketio',
+        auth: { token: getStoredPassword() ?? '' },
+      });
+      socketInstance.on(CLIPBOARD_CREATED_EVENT, (newItem: ClipboardItem) => {
+        if (searchTermRef.current) {
+          fetchItems(searchTermRef.current);
+        } else {
+          setItems(prev => (prev.find(i => i.id === newItem.id) ? prev : [newItem, ...prev]));
+        }
+      });
+      socketInstance.on(CLIPBOARD_DELETED_EVENT, ({ id }: { id: string }) => {
+        setItems(prev => prev.filter(i => i.id !== id));
+      });
+    })();
+    return () => { try { socketInstance?.disconnect(); } catch {} };
   }, [authenticated]);
 
   const copyToClipboard = async (content: string) => {
@@ -235,30 +210,7 @@ export default function Home() {
     }
   };
 
-  const getTypeIcon = (type: string) => {
-    switch (type) {
-      case 'TEXT':
-        return <FileText className="h-4 w-4" />;
-      case 'IMAGE':
-        return <ImageIcon className="h-4 w-4" />;
-      case 'FILE':
-        return <FileIcon className="h-4 w-4" />;
-      default:
-        return <FileIcon className="h-4 w-4" />;
-    }
-  };
-
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString('zh-CN');
-  };
+  // formatting moved to grid/utilities
 
   const handleDelete = async (id: string) => {
     try {
@@ -313,7 +265,7 @@ export default function Home() {
         {/* Header */}
         <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between mb-6">
           <div>
-            <h1 className="text-3xl font-bold">私人云剪贴板</h1>
+            <h1 className="text-3xl font-bold">云剪贴板</h1>
             <p className="text-muted-foreground mt-1">管理您的剪贴板内容</p>
           </div>
           
@@ -345,32 +297,15 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Clipboard Items Grid */}
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={handleDragEnd}
-        >
-          <SortableContext
-            items={items.map(item => item.id)}
-          >
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {items.map((item) => (
-                <SortableItem
-                  key={item.id}
-                  id={item.id}
-                  item={item}
-                  onSelectItem={(id: string) => openItemById(id)}
-                  onCopy={copyToClipboard}
-                  onDelete={handleDelete}
-                  getTypeIcon={getTypeIcon}
-                  formatFileSize={formatFileSize}
-                  formatDate={formatDate}
-                />
-              ))}
-            </div>
-          </SortableContext>
-        </DndContext>
+        {/* Clipboard Items Grid (dynamic, client-only) */}
+        <ClipboardGrid
+          items={items}
+          onReorder={(newItems) => setItems(newItems)}
+          onSelectItem={(id: string) => handleSelectItem(id)}
+          onCopy={copyToClipboard}
+          onRequestDelete={(id: string) => { setPendingDeleteId(id); setDeleteOpen(true); }}
+          onRequestShare={(id: string) => { setShareItemId(id); setShareOpen(true); }}
+        />
 
         {items.length === 0 && (
           <div className="text-center py-12">
@@ -392,15 +327,29 @@ export default function Home() {
         )}
       </div>
       
+      {/* 统一删除确认弹窗 */}
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认删除</AlertDialogTitle>
+            <AlertDialogDescription>删除后将无法恢复。确定要删除该条目吗？</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { if (pendingDeleteId) handleDelete(pendingDeleteId); setDeleteOpen(false); }}>确认删除</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* 创建分享链接（单例） */}
+      <CreateShareDialog itemId={shareItemId} open={shareOpen} onOpenChange={(o) => { setShareOpen(o); if (!o) setShareItemId(null); }} />
+
       {/* 详情对话框 */}
-      <ItemDetailDialog 
-        item={selectedItem} 
-        open={!!selectedItem} 
+      <ItemDetailDialog
+        item={selectedItem}
+        open={!!selectedItem}
         onOpenChange={(open) => !open && setSelectedItem(null)}
-        onDelete={(id) => {
-          handleDelete(id);
-          setSelectedItem(null);
-        }}
+        onDelete={(id) => { handleDelete(id); setSelectedItem(null); }}
       />
 
       {/* 分享管理 */}
@@ -409,404 +358,10 @@ export default function Home() {
   );
 }
 
-function SortableItem({ id, item, onSelectItem, onCopy, onDelete, getTypeIcon, formatFileSize, formatDate }: any) {
-  const { toast } = useToast();
-  const [shareOpen, setShareOpen] = useState(false);
-  const [creatingShare, setCreatingShare] = useState(false);
-  const [shareUrl, setShareUrl] = useState<string | null>(null);
-  const [expiresIn, setExpiresIn] = useState<string>('86400'); // 24h default
-  const [maxDownloads, setMaxDownloads] = useState<string>('');
-  const [sharePassword, setSharePassword] = useState<string>('');
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({id});
-  
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-  };
-  
-  return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      <Card
-        className="group relative hover:shadow-md transition-shadow cursor-pointer h-52"
-        onClick={() => {
-          if (!isDragging) {
-            onSelectItem(item.id);
-          }
-        }}
-      >
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              {getTypeIcon(item.type)}
-              <Badge variant="secondary">{item.type}</Badge>
-            </div>
-            <div className="flex gap-1 items-center opacity-0 group-hover:opacity-100 transition-opacity">
-              <Button
-                size="sm"
-                variant="ghost"
-                className="cursor-pointer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (item.content) {
-                    onCopy(item.content);
-                  }
-                }}
-                disabled={!item.content}
-              >
-                <Copy className="h-3 w-3" />
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="cursor-pointer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShareOpen(true);
-                }}
-                aria-label="分享"
-                title="分享"
-              >
-                <Share2 className="h-3 w-3" />
-              </Button>
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="cursor-pointer"
-                    onClick={(e) => e.stopPropagation()}
-                    aria-label="删除"
-                    title="删除"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent onClick={(e) => e.stopPropagation()}>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>确认删除</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      删除后将无法恢复。确定要删除该条目吗？
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel onClick={(e) => e.stopPropagation()}>取消</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDelete(item.id);
-                      }}
-                    >
-                      确认删除
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="pb-12">
-          <div className="space-y-2">
-            {(item.type === 'FILE' || item.type === 'IMAGE') && (
-              <p className="text-sm font-medium truncate">
-                {item.fileName || (item.type === 'IMAGE' ? '图片' : '文件')}
-              </p>
-            )}
-            {item.content && (
-              <p className="text-sm text-muted-foreground line-clamp-3">
-                {item.content}
-              </p>
-            )}
-          </div>
-          <div className="absolute bottom-3 right-3 text-right text-xs text-muted-foreground">
-            {item.fileSize && (
-              <div>
-                大小: {formatFileSize(item.fileSize)}
-              </div>
-            )}
-            <div>
-              {formatDate(item.createdAt)}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* 分享对话框 */}
-      <Dialog open={shareOpen} onOpenChange={(o) => {
-        setShareOpen(o);
-        if (!o) {
-          setShareUrl(null);
-          setCreatingShare(false);
-          setExpiresIn('86400');
-          setMaxDownloads('');
-          setSharePassword('');
-        }
-      }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>创建分享链接</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            {!shareUrl ? (
-              <>
-                <div>
-                  <label className="text-sm font-medium mb-1 block">有效期</label>
-                  <select
-                    className="w-full rounded border px-2 py-1 text-sm bg-background"
-                    value={expiresIn}
-                    onChange={(e) => setExpiresIn(e.target.value)}
-                  >
-                    <option value="0">永不过期</option>
-                    <option value="3600">1 小时</option>
-                    <option value="86400">24 小时</option>
-                    <option value="604800">7 天</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-sm font-medium mb-1 block">最大下载次数（可选）</label>
-                  <Input
-                    type="number"
-                    placeholder="不限则留空"
-                    value={maxDownloads}
-                    onChange={(e) => setMaxDownloads(e.target.value)}
-                    min={1}
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium mb-1 block">分享口令（可选）</label>
-                  <Input
-                    type="password"
-                    placeholder="不设置则留空"
-                    value={sharePassword}
-                    onChange={(e) => setSharePassword(e.target.value)}
-                  />
-                </div>
-                <div className="flex justify-end gap-2 pt-2">
-                  <Button variant="outline" onClick={() => setShareOpen(false)}>取消</Button>
-                  <Button
-                    onClick={async () => {
-                      try {
-                        setCreatingShare(true);
-                        const payload: any = { itemId: item.id };
-                        const ei = parseInt(expiresIn, 10);
-                        if (!isNaN(ei) && ei > 0) payload.expiresIn = ei;
-                        if (maxDownloads.trim()) payload.maxDownloads = Number(maxDownloads);
-                        if (sharePassword.trim()) payload.password = sharePassword.trim();
-                        const res = await authFetch('/api/share', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify(payload),
-                        });
-                        const data = await res.json();
-                        if (!res.ok) throw new Error(data?.error || '创建失败');
-                        const origin = typeof window !== 'undefined' ? window.location.origin : '';
-                        setShareUrl(origin + data.url);
-                      } catch (e: any) {
-                        toast({ title: '创建失败', description: e?.message || '请稍后重试', variant: 'destructive' });
-                      } finally {
-                        setCreatingShare(false);
-                      }
-                    }}
-                    disabled={creatingShare}
-                  >
-                    {creatingShare ? '创建中...' : '创建'}
-                  </Button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div>
-                  <label className="text-sm font-medium mb-1 block">分享链接</label>
-                  <div className="flex gap-2">
-                    <Input readOnly value={shareUrl} />
-                    <Button
-                      onClick={async () => {
-                        try {
-                          await navigator.clipboard.writeText(shareUrl!);
-                          toast({ title: '已复制链接' });
-                        } catch {}
-                      }}
-                    >
-                      复制
-                    </Button>
-                  </div>
-                  <div className="mt-2 text-sm text-muted-foreground">
-                    任何知道此链接的人都可访问。你可随时在详情页撤销分享（暂未提供 UI）。
-                  </div>
-                </div>
-                <div className="flex justify-end pt-2">
-                  <Button onClick={() => setShareOpen(false)}>完成</Button>
-                </div>
-              </>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
+// moved into components/clipboard/ClipboardGrid
 
 // 分享管理对话框
-function ShareManagerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
-  const { toast } = useToast();
-  const [loading, setLoading] = useState(false);
-  const [page, setPage] = useState(1);
-  const pageSize = 5;
-  const [includeRevoked, setIncludeRevoked] = useState(false);
-  const [shares, setShares] = useState<Array<{
-    token: string;
-    url: string;
-    item: { id: string; type: 'TEXT'|'IMAGE'|'FILE'; fileName?: string | null; fileSize?: number | null };
-    expiresAt?: string | null;
-    maxDownloads?: number | null;
-    downloadCount: number;
-    revoked: boolean;
-    requiresPassword: boolean;
-    createdAt: string;
-  }>>([]);
-
-  const load = async () => {
-    try {
-      setLoading(true);
-      const params = new URLSearchParams();
-      if (includeRevoked) params.set('includeRevoked', '1');
-      params.set('page', String(page));
-      params.set('pageSize', String(pageSize));
-      const res = await authFetch(`/api/share?${params.toString()}`);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || '加载失败');
-      setShares(json.data);
-      setHasMore(json.hasMore);
-    } catch (e: any) {
-      toast({ title: '加载失败', description: e?.message || '请稍后重试', variant: 'destructive' });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (open) load();
-  }, [open, includeRevoked, page]);
-
-  const [hasMore, setHasMore] = useState(false);
-
-  const revoke = async (token: string) => {
-    try {
-      const res = await authFetch(`/api/share/${token}/revoke`, { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || '撤销失败');
-      toast({ title: '已撤销' });
-      await load();
-    } catch (e: any) {
-      toast({ title: '撤销失败', description: e?.message || '请稍后重试', variant: 'destructive' });
-    }
-  };
-
-  const removeShare = async (token: string) => {
-    try {
-      const res = await authFetch(`/api/share/${token}`, { method: 'DELETE' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || '删除失败');
-      toast({ title: '已删除' });
-      await load();
-    } catch (e: any) {
-      toast({ title: '删除失败', description: e?.message || '请稍后重试', variant: 'destructive' });
-    }
-  };
-
-  const copy = async (url: string) => {
-    try { await navigator.clipboard.writeText((window?.location?.origin || '') + url); toast({ title: '已复制' }); } catch {}
-  };
-
-  const expired = (s: any) => s.expiresAt && new Date(s.expiresAt).getTime() < Date.now();
-  const exhausted = (s: any) => typeof s.maxDownloads === 'number' && s.maxDownloads >= 0 && s.downloadCount >= s.maxDownloads;
-  const invalid = (s: any) => s.revoked || expired(s) || exhausted(s);
-
-  const statusText = (s: any) => {
-    if (s.revoked) return '已撤销';
-    if (expired(s)) return '已过期';
-    if (exhausted(s)) return '已用尽';
-    return '有效';
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>分享管理</DialogTitle>
-        </DialogHeader>
-        <div className="flex items-center justify-between mb-2">
-          <div className="text-sm text-muted-foreground">共有 {shares.length} 条分享链接（第 {page} 页）</div>
-          <label className="text-sm flex items-center gap-2">
-            <input type="checkbox" checked={includeRevoked} onChange={(e) => { setIncludeRevoked(e.target.checked); setPage(1); }} />
-            显示已失效（撤销/过期/用尽）
-          </label>
-        </div>
-        <div className="overflow-x-auto border rounded">
-          <table className="w-full text-sm">
-            <thead className="bg-muted">
-              <tr>
-                <th className="text-left p-2">条目</th>
-                <th className="text-left p-2">链接</th>
-                <th className="text-left p-2">限制</th>
-                <th className="text-left p-2">状态</th>
-                <th className="text-right p-2">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr><td colSpan={5} className="p-4">加载中...</td></tr>
-              ) : shares.length === 0 ? (
-                <tr><td colSpan={5} className="p-4">暂无分享</td></tr>
-              ) : (
-                shares.map((s) => (
-                  <tr key={s.token} className="border-t">
-                    <td className="p-2">
-                      <div className="font-medium">{s.item.type === 'TEXT' ? '文本' : (s.item.fileName || s.item.id)}</div>
-                      <div className="text-muted-foreground">{s.item.type}</div>
-                    </td>
-                    <td className="p-2">
-                      <div className="truncate max-w-[260px]">{s.url}</div>
-                      <div className="text-muted-foreground">{new Date(s.createdAt).toLocaleString('zh-CN')}</div>
-                    </td>
-                    <td className="p-2">
-                      <div>下载：{s.downloadCount}{typeof s.maxDownloads === 'number' ? `/${s.maxDownloads}` : ''}</div>
-                      <div>{s.expiresAt ? `到期：${new Date(s.expiresAt).toLocaleString('zh-CN')}` : '无限期'}</div>
-                      <div>{s.requiresPassword ? '有口令' : '无口令'}</div>
-                    </td>
-                    <td className="p-2">{statusText(s)}</td>
-                    <td className="p-2 text-right space-x-2">
-                      <Button variant="outline" size="sm" onClick={() => copy(s.url)}>复制</Button>
-                      {invalid(s) ? (
-                        <Button variant="destructive" size="sm" onClick={() => removeShare(s.token)}>删除</Button>
-                      ) : (
-                        <Button variant="destructive" size="sm" onClick={() => revoke(s.token)}>撤销</Button>
-                      )}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-        <div className="flex justify-between items-center mt-3">
-          <div className="text-xs text-muted-foreground">每页 {pageSize} 条</div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>上一页</Button>
-            <Button variant="outline" size="sm" disabled={!hasMore} onClick={() => setPage((p) => p + 1)}>下一页</Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
+// moved into components/clipboard/ShareManagerDialog
 
 // 认证对话框组件
 function AuthDialog({ onSuccess }: { onSuccess: () => void }) {
@@ -855,484 +410,6 @@ function AuthDialog({ onSuccess }: { onSuccess: () => void }) {
 }
 
 // 详情对话框组件
-function ItemDetailDialog({
-  item, 
-  open, 
-  onOpenChange, 
-  onDelete 
-}: { 
-  item: ClipboardItem | null; 
-  open: boolean; 
-  onOpenChange: (open: boolean) => void; 
-  onDelete: (id: string) => void; 
-}) {
-  const { toast } = useToast();
+// moved into components/clipboard/ItemDetailDialog
 
-  if (!item) return null;
-
-  const copyToClipboard = async (content: string) => {
-    try {
-      if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-        await navigator.clipboard.writeText(content);
-      } else {
-        const textarea = document.createElement('textarea');
-        textarea.value = content;
-        textarea.style.position = 'fixed';
-        textarea.style.opacity = '0';
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textarea);
-      }
-      toast({
-        title: "已复制到剪贴板",
-        description: "内容已成功复制到剪贴板",
-      });
-    } catch (err) {
-      toast({
-        title: "复制失败",
-        description: "无法访问剪贴板，请手动复制",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const downloadFile = () => {
-    const link = document.createElement('a');
-    link.href = `/api/files/${item.id}?download=1`;
-    link.download = item.fileName || 'download';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  const getTypeIcon = (type: string) => {
-    switch (type) {
-      case 'TEXT':
-        return <FileText className="h-5 w-5" />;
-      case 'IMAGE':
-        return <ImageIcon className="h-5 w-5" />;
-      case 'FILE':
-        return <FileIcon className="h-5 w-5" />;
-      default:
-        return <FileIcon className="h-5 w-5" />;
-    }
-  };
-
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
-          <div className="flex items-center gap-3">
-            {getTypeIcon(item.type)}
-            <div>
-              <DialogTitle className="text-xl">
-                条目详情
-              </DialogTitle>
-              <div className="flex items-center gap-2 mt-1">
-                <Badge variant="secondary">{item.type}</Badge>
-                {item.fileSize && (
-                  <span className="text-sm text-muted-foreground">
-                    {formatFileSize(item.fileSize)}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-        </DialogHeader>
-        
-        <div className="space-y-6">
-          {/* 内容区域 */}
-          {item.content && (
-            <div>
-              <h3 className="text-sm font-medium mb-2">内容</h3>
-              <div className="bg-muted p-4 rounded-lg">
-                <pre className="whitespace-pre-wrap text-sm">{item.content}</pre>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-2"
-                onClick={() => copyToClipboard(item.content!)}
-              >
-                <Copy className="h-4 w-4 mr-2" />
-                复制内容
-              </Button>
-            </div>
-          )}
-
-          {/* 图片预览 */}
-          {item.type === 'IMAGE' && (
-            <div>
-              <h3 className="text-sm font-medium mb-2">图片预览</h3>
-              <div className="bg-muted p-4 rounded-lg flex justify-center">
-                <img
-                  src={`/api/files/${item.id}`}
-                  alt={item.fileName || '图片'}
-                  className="max-w-full max-h-96 object-contain rounded"
-                />
-              </div>
-              <div className="flex gap-2 mt-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={downloadFile}
-                >
-                  <Copy className="h-4 w-4 mr-2" />
-                  下载图片
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* 文件信息 */}
-          {item.type === 'FILE' && (
-            <div>
-              <h3 className="text-sm font-medium mb-2">文件信息</h3>
-              <div className="bg-muted p-4 rounded-lg">
-                <div className="space-y-2">
-                  <div className="flex justify-between">
-                    <span className="text-sm font-medium">文件名:</span>
-                    <span className="text-sm">{item.fileName}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-sm font-medium">大小:</span>
-                    <span className="text-sm">{formatFileSize(item.fileSize!)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-sm font-medium">类型:</span>
-                    <span className="text-sm">{item.type}</span>
-                  </div>
-                </div>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-2"
-                onClick={downloadFile}
-              >
-                <Copy className="h-4 w-4 mr-2" />
-                下载文件
-              </Button>
-            </div>
-          )}
-
-          {/* 元数据 */}
-          <div>
-            <h3 className="text-sm font-medium mb-2">元数据</h3>
-            <div className="bg-muted p-4 rounded-lg space-y-2">
-              <div className="flex justify-between">
-                <span className="text-sm font-medium">创建时间:</span>
-                <span className="text-sm">{new Date(item.createdAt).toLocaleString('zh-CN')}</span>
-              </div>
-              {item.updatedAt !== item.createdAt && (
-                <div className="flex justify-between">
-                  <span className="text-sm font-medium">更新时间:</span>
-                  <span className="text-sm">{new Date(item.updatedAt).toLocaleString('zh-CN')}</span>
-                </div>
-              )}
-              <div className="flex justify-between">
-                <span className="text-sm font-medium">ID:</span>
-                <span className="text-sm font-mono">{item.id}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* 操作按钮 */}
-          <div className="flex justify-between pt-4 border-t">
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="destructive" size="sm">
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  删除
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>确认删除</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    删除后将无法恢复。确定要删除该条目吗？
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>取消</AlertDialogCancel>
-                  <AlertDialogAction onClick={() => onDelete(item.id)}>确认删除</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              关闭
-            </Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// 添加条目对话框组件
-function AddItemDialog({ onItemAdded }: { onItemAdded: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [content, setContent] = useState('');
-  const [file, setFile] = useState<File | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const { toast } = useToast();
-
-  const handleFileSelect = (selectedFile: File) => {
-    setFile(selectedFile);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    
-    const droppedFile = e.dataTransfer.files[0];
-    if (droppedFile) {
-      handleFileSelect(droppedFile);
-    }
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-  };
-
-  // 粘贴图片（Ctrl+V）支持
-  const handlePaste = (e: React.ClipboardEvent) => {
-    try {
-      const items = e.clipboardData?.items;
-      if (!items) return;
-
-      for (let i = 0; i < items.length; i++) {
-        const it = items[i];
-        if (it.kind === 'file' || (it.type && it.type.startsWith('image/'))) {
-          const pastedFile = it.getAsFile?.();
-          if (pastedFile) {
-            setFile(pastedFile);
-            // 给予轻提示
-            toast({
-              title: '已获取粘贴的图片',
-              description: `${pastedFile.name || 'image'} (${(pastedFile.size / 1024 / 1024).toFixed(2)} MB)`,
-            });
-            break;
-          }
-        }
-      }
-    } catch {}
-  };
-
-  const handleSubmit = async () => {
-    if (!content.trim() && !file) {
-      toast({
-        title: "请输入内容或上传文件",
-        description: "内容和文件不能同时为空",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setUploadProgress(0);
-    abortControllerRef.current = new AbortController();
-
-    try {
-      const formData = new FormData();
-      formData.append('content', content);
-
-      let itemType: 'TEXT' | 'IMAGE' | 'FILE' = 'TEXT';
-
-      if (file) {
-        itemType = file.type.startsWith('image/') ? 'IMAGE' : 'FILE';
-        formData.append('file', file);
-      }
-      formData.append('type', itemType);
-
-      const response = await axios.post('/api/clipboard', formData, {
-        headers: {
-          ...(getAuthHeaders() as Record<string, string>),
-          'Content-Type': 'multipart/form-data',
-        },
-        signal: abortControllerRef.current.signal,
-        onUploadProgress: (progressEvent) => {
-          const total = progressEvent.total ?? progressEvent.loaded;
-          const percentCompleted = Math.round((progressEvent.loaded * 100) / total);
-          setUploadProgress(percentCompleted);
-        },
-      });
-
-      if (response.status === 201) {
-        toast({
-          title: "添加成功",
-          description: "新条目已成功添加到剪贴板",
-        });
-        
-        resetForm();
-        setOpen(false);
-        onItemAdded();
-      } else {
-        throw new Error(response.data.error || 'Failed to create item');
-      }
-    } catch (error) {
-      if (axios.isCancel(error)) {
-        toast({
-          title: "上传已取消",
-        });
-      } else {
-        toast({
-          title: "添加失败",
-          description: "文件处理失败，请重试",
-          variant: "destructive",
-        });
-      }
-    } finally {
-      setUploadProgress(null);
-      abortControllerRef.current = null;
-    }
-  };
-
-  const resetForm = () => {
-    setContent('');
-    setFile(null);
-    setUploadProgress(null);
-    abortControllerRef.current = null;
-  };
-
-  const handleCancel = () => {
-    if (uploadProgress !== null) {
-      abortControllerRef.current?.abort();
-    } else {
-      setOpen(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={(newOpen) => {
-      setOpen(newOpen);
-      if (!newOpen) resetForm();
-    }}>
-      <DialogTrigger asChild>
-        <Button>
-          <Plus className="h-4 w-4 mr-2" />
-          添加条目
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-md max-h-[80vh] flex flex-col" onPaste={handlePaste}>
-        <DialogHeader>
-          <DialogTitle>添加新条目</DialogTitle>
-        </DialogHeader>
-        
-        <div className="flex-1 overflow-y-auto space-y-4">
-          {/* 内容输入区域 */}
-          <div>
-            <label className="text-sm font-medium mb-2 block">内容</label>
-            <div className="relative">
-              <Textarea
-                placeholder="输入文本内容..."
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                rows={6}
-                className="resize-none max-h-48"
-              />
-            </div>
-          </div>
-
-          {/* 文件上传区域 */}
-          <div>
-            <label className="text-sm font-medium mb-2 block">上传文件</label>
-            <div
-              className={`cursor-pointer border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
-                isDragging
-                  ? 'border-primary bg-primary/5'
-                  : file
-                  ? 'border-green-500 bg-green-50'
-                  : 'border-gray-300 hover:border-gray-400'
-              }`}
-              onDrop={handleDrop}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onPaste={handlePaste}
-              tabIndex={0}
-            >
-              {file ? (
-                <div className="space-y-2">
-                  <FileIcon className="h-8 w-8 text-green-600 mx-auto" />
-                  <p className="text-sm font-medium">{file.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {(file.size / 1024 / 1024).toFixed(2)} MB
-                  </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setFile(null)}
-                  >
-                    重新选择
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <FileIcon className="h-8 w-8 text-muted-foreground mx-auto" />
-                  <p className="text-sm text-muted-foreground">
-                    拖拽文件到此处、点击选择，或在此处按 Ctrl+V 粘贴图片
-                  </p>
-                  <input
-                    type="file"
-                    onChange={(e) => {
-                      const selectedFile = e.target.files?.[0];
-                      if (selectedFile) handleFileSelect(selectedFile);
-                    }}
-                    className="hidden"
-                    id="file-upload"
-                  />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => document.getElementById('file-upload')?.click()}
-                  >
-                    选择文件
-                  </Button>
-                </div>
-              )}
-            </div>
-             {/* 上传进度条 */}
-            {uploadProgress !== null && (
-              <div className="space-y-2">
-                <Progress value={uploadProgress} className="w-full" />
-                <p className="text-sm text-center text-muted-foreground">
-                  {uploadProgress < 100 ? `上传中... ${uploadProgress}%` : '处理中...'}
-                </p>
-              </div>
-            )}
-          </div>
-          
-          {/* 底部操作按钮 - 固定位置 */}
-          <div className="flex justify-between items-center pt-4 border-t bg-background">
-            <div className="text-xs text-muted-foreground">
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={handleCancel}>
-                取消
-              </Button>
-              <Button onClick={handleSubmit} disabled={uploadProgress !== null}>
-                {uploadProgress !== null ? '上传中...' : '添加'}
-              </Button>
-            </div>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
+// 添加条目对话框组件已拆分为独立动态组件（见 components/clipboard/AddItemDialog）

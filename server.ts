@@ -1,6 +1,8 @@
 // server.ts - Next.js Standalone + Socket.IO
 import { setupSocket, setIO, getIO } from './src/lib/socket';
 import { createServer } from 'http';
+import { promises as fsp } from 'fs';
+import path from 'path';
 import { Server } from 'socket.io';
 // Load Next from standalone bundle path in production (slim image),
 // and fall back to regular 'next' for local/dev environments.
@@ -42,6 +44,15 @@ async function createCustomServer() {
 
     await nextApp.prepare();
     const handle = nextApp.getRequestHandler();
+
+    // Ensure data directories exist at runtime (especially when volumes are mounted)
+    try {
+      const dataDir = path.join(process.cwd(), 'data');
+      const uploadsDir = path.join(dataDir, 'uploads');
+      await fsp.mkdir(uploadsDir, { recursive: true });
+    } catch (e) {
+      console.warn('Warning: failed to ensure data/uploads directories:', e);
+    }
 
     // Create HTTP server that will handle both Next.js and Socket.IO
     const server = createServer((req, res) => {
