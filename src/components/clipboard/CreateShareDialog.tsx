@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { authFetch } from "@/lib/auth";
-import { safeCopyText } from "@/lib/copy";
+import { safeCopyText, isSecure } from "@/lib/copy";
 
 export default function CreateShareDialog({
   itemId,
@@ -20,6 +20,7 @@ export default function CreateShareDialog({
   const { toast } = useToast();
   const [creatingShare, setCreatingShare] = useState(false);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const [expiresIn, setExpiresIn] = useState<string>("86400");
   const [maxDownloads, setMaxDownloads] = useState<string>("");
   const [sharePassword, setSharePassword] = useState<string>("");
@@ -99,12 +100,20 @@ export default function CreateShareDialog({
               <div>
                 <label className="text-sm font-medium mb-1 block">分享链接</label>
                 <div className="flex gap-2">
-                  <Input readOnly value={shareUrl} />
+                  <Input readOnly value={shareUrl} ref={inputRef} />
                   <Button
                     onClick={async () => {
                       const ok = await safeCopyText(shareUrl!);
-                      if (ok) toast({ title: "已复制链接" });
-                      else toast({ title: "复制失败", description: "浏览器限制或权限不足，请手动复制", variant: "destructive" });
+                      if (ok) {
+                        toast({ title: "已复制链接" });
+                        return;
+                      }
+                      // In insecure contexts, assist manual copy: select the input content
+                      try {
+                        inputRef.current?.focus();
+                        inputRef.current?.select();
+                      } catch {}
+                      toast({ title: "请手动复制", description: isSecure() ? "浏览器限制或权限不足" : "当前为 HTTP 环境，系统复制受限", variant: "destructive" });
                     }}
                   >
                     复制

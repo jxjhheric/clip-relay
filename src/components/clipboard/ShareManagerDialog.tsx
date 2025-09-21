@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { authFetch } from "@/lib/auth";
-import { safeCopyText } from "@/lib/copy";
+import { safeCopyText, isSecure } from "@/lib/copy";
 
 export default function ShareManagerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const { toast } = useToast();
@@ -77,8 +77,17 @@ export default function ShareManagerDialog({ open, onOpenChange }: { open: boole
   const copy = async (url: string) => {
     const full = (window?.location?.origin || "") + url;
     const ok = await safeCopyText(full);
-    if (ok) toast({ title: "已复制" });
-    else toast({ title: "复制失败", description: "浏览器限制或权限不足，请手动复制", variant: "destructive" });
+    if (ok) {
+      toast({ title: "已复制" });
+      return;
+    }
+    // Fallback UX for HTTP or restricted browsers
+    try {
+      const promptText = isSecure() ? "浏览器限制或权限不足，请手动复制：" : "当前为 HTTP 环境，系统复制受限，请手动复制：";
+      // eslint-disable-next-line no-alert
+      window.prompt(promptText, full);
+    } catch {}
+    toast({ title: "请手动复制", variant: "destructive" });
   };
 
   const expired = (s: any) => s.expiresAt && new Date(s.expiresAt).getTime() < Date.now();

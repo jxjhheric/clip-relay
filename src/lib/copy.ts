@@ -1,4 +1,17 @@
+export function isSecure(): boolean {
+  try {
+    return typeof window !== 'undefined' && !!window.isSecureContext;
+  } catch {
+    return false;
+  }
+}
+
 export async function safeCopyText(text: string): Promise<boolean> {
+  // In insecure contexts (HTTP), clipboard APIs are unreliable across browsers.
+  // Return false so callers can fall back to manual copy UI.
+  if (!isSecure()) {
+    return false;
+  }
   try {
     if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
       await navigator.clipboard.writeText(text);
@@ -25,4 +38,3 @@ export async function safeCopyText(text: string): Promise<boolean> {
     return false;
   }
 }
-
