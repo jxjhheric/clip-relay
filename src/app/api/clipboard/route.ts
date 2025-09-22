@@ -20,6 +20,8 @@ export async function GET(request: NextRequest) {
     const take = Math.min(48, Math.max(1, parseInt(searchParams.get('take') || '24', 10)));
     const cursorCreatedAt = searchParams.get('cursorCreatedAt');
     const cursorId = searchParams.get('cursorId');
+    const cursorSortWeightStr = searchParams.get('cursorSortWeight');
+    const cursorSortWeight = cursorSortWeightStr ? parseInt(cursorSortWeightStr, 10) : undefined;
 
     const conds: any[] = [];
     if (search) {
@@ -33,12 +35,31 @@ export async function GET(request: NextRequest) {
     if (cursorId && cursorCreatedAt) {
       const cursorDate = new Date(cursorCreatedAt);
       if (!isNaN(cursorDate.getTime())) {
-        conds.push(
-          or(
-            lt(clipboardItems.createdAt, cursorDate),
-            and(eq(clipboardItems.createdAt, cursorDate), lt(clipboardItems.id, cursorId))
-          )
-        );
+        if (typeof cursorSortWeight === 'number' && !Number.isNaN(cursorSortWeight)) {
+          // Keyset pagination by (sortWeight DESC, createdAt DESC, id DESC)
+          conds.push(
+            or(
+              lt(clipboardItems.sortWeight, cursorSortWeight),
+              and(
+                eq(clipboardItems.sortWeight, cursorSortWeight),
+                lt(clipboardItems.createdAt, cursorDate)
+              ),
+              and(
+                eq(clipboardItems.sortWeight, cursorSortWeight),
+                eq(clipboardItems.createdAt, cursorDate),
+                lt(clipboardItems.id, cursorId)
+              )
+            )
+          );
+        } else {
+          // Fallback to createdAt + id pagination for legacy clients
+          conds.push(
+            or(
+              lt(clipboardItems.createdAt, cursorDate),
+              and(eq(clipboardItems.createdAt, cursorDate), lt(clipboardItems.id, cursorId))
+            )
+          );
+        }
       }
     }
 
@@ -51,17 +72,18 @@ export async function GET(request: NextRequest) {
         content: clipboardItems.content,
         fileName: clipboardItems.fileName,
         fileSize: clipboardItems.fileSize,
+        sortWeight: clipboardItems.sortWeight,
         createdAt: clipboardItems.createdAt,
         updatedAt: clipboardItems.updatedAt,
       })
       .from(clipboardItems)
       .where(whereExpr as any)
-      .orderBy(desc(clipboardItems.createdAt), desc(clipboardItems.id))
+      .orderBy(desc(clipboardItems.sortWeight), desc(clipboardItems.createdAt), desc(clipboardItems.id))
       .limit(take + 1);
 
     const hasMore = rows.length > take;
     const items = hasMore ? rows.slice(0, take) : rows;
-    const nextCursor = hasMore ? { id: rows[take].id, createdAt: rows[take].createdAt } : null;
+    const nextCursor = hasMore ? { id: rows[take].id, createdAt: rows[take].createdAt, sortWeight: rows[take].sortWeight } : null;
 
     return NextResponse.json({ items, nextCursor, hasMore });
   } catch (error) {
@@ -142,6 +164,7 @@ export async function POST(request: NextRequest) {
             content: clipboardItems.content,
             fileName: clipboardItems.fileName,
             fileSize: clipboardItems.fileSize,
+            sortWeight: clipboardItems.sortWeight,
             createdAt: clipboardItems.createdAt,
             updatedAt: clipboardItems.updatedAt,
           })
@@ -155,6 +178,7 @@ export async function POST(request: NextRequest) {
           content: newItemFS.content,
           fileName: newItemFS.fileName,
           fileSize: newItemFS.fileSize,
+          sortWeight: newItemFS.sortWeight,
           createdAt: newItemFS.createdAt,
           updatedAt: newItemFS.updatedAt,
         };
@@ -183,6 +207,7 @@ export async function POST(request: NextRequest) {
         content: clipboardItems.content,
         fileName: clipboardItems.fileName,
         fileSize: clipboardItems.fileSize,
+        sortWeight: clipboardItems.sortWeight,
         createdAt: clipboardItems.createdAt,
         updatedAt: clipboardItems.updatedAt,
       })
@@ -197,6 +222,7 @@ export async function POST(request: NextRequest) {
       content: newItem.content,
       fileName: newItem.fileName,
       fileSize: newItem.fileSize,
+      sortWeight: newItem.sortWeight,
       createdAt: newItem.createdAt,
       updatedAt: newItem.updatedAt,
     };

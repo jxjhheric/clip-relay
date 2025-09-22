@@ -11,6 +11,8 @@ export const clipboardItems = sqliteTable(
     content: text('content'),
     fileName: text('fileName'),
     fileSize: integer('fileSize'),
+    // Larger value means higher priority in ordering
+    sortWeight: integer('sortWeight').default(0).notNull(),
     contentType: text('contentType'),
     inlineData: blob('inlineData').$type<Buffer | null>(),
     filePath: text('filePath'),
@@ -23,6 +25,7 @@ export const clipboardItems = sqliteTable(
   },
   (table) => ({
     createdIdx: index('clipboard_created_idx').on(table.createdAt, table.id),
+    sortIdx: index('clipboard_sort_idx').on(table.sortWeight, table.createdAt, table.id),
   })
 );
 
@@ -48,4 +51,3 @@ export const shareLinks = sqliteTable(
     createdIdx: index('share_created_idx').on(table.createdAt),
   })
 );
-

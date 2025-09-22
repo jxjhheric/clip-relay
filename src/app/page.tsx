@@ -18,7 +18,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import { authFetch, verifyPassword, clearPassword } from '@/lib/auth';
-import { CLIPBOARD_CREATED_EVENT, CLIPBOARD_DELETED_EVENT } from '@/lib/socket-events';
+import { CLIPBOARD_CREATED_EVENT, CLIPBOARD_DELETED_EVENT, CLIPBOARD_REORDERED_EVENT } from '@/lib/socket-events';
 import type { ClipboardItem as GridItem } from '@/components/clipboard/ClipboardGrid';
 
 const ClipboardGrid = dynamic(() => import('@/components/clipboard/ClipboardGrid'), { ssr: false });
@@ -40,7 +40,7 @@ export default function Home() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [shareItemId, setShareItemId] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
-  const [nextCursor, setNextCursor] = useState<{ id: string; createdAt: string } | null>(null);
+  const [nextCursor, setNextCursor] = useState<{ id: string; createdAt: string; sortWeight?: number } | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const { toast } = useToast();
 
@@ -108,6 +108,7 @@ export default function Home() {
       params.set('take', '24');
       params.set('cursorCreatedAt', nextCursor.createdAt);
       params.set('cursorId', nextCursor.id);
+      if (typeof nextCursor.sortWeight === 'number') params.set('cursorSortWeight', String(nextCursor.sortWeight));
       if (searchTermRef.current) params.set('search', searchTermRef.current);
       const res = await authFetch(`/api/clipboard?${params.toString()}`);
       const data = await res.json();
@@ -170,12 +171,48 @@ export default function Home() {
         if (searchTermRef.current) {
           fetchItems(searchTermRef.current);
         } else {
-          setItems(prev => (prev.find(i => i.id === newItem.id) ? prev : [newItem, ...prev]));
+          setItems(prev => {
+            // Insert by sortWeight desc, then createdAt desc, then id desc
+            if (prev.find(i => i.id === newItem.id)) return prev;
+            const arr = [...prev];
+            const keyOf = (x: ClipboardItem) => [x.sortWeight ?? 0, new Date(x.createdAt).getTime(), x.id] as const;
+            const newKey = keyOf(newItem);
+            let idx = 0;
+            while (idx < arr.length) {
+              const k = keyOf(arr[idx]);
+              if (
+                newKey[0] > (k[0] ?? 0) ||
+                (newKey[0] === (k[0] ?? 0) && (newKey[1] > k[1] || (newKey[1] === k[1] && newKey[2] > k[2])))
+              ) {
+                break;
+              }
+              idx++;
+            }
+            arr.splice(idx, 0, newItem);
+            return arr;
+          });
         }
       });
       es.addEventListener(CLIPBOARD_DELETED_EVENT, (ev: MessageEvent) => {
         const { id } = JSON.parse((ev as MessageEvent).data) as { id: string };
         setItems(prev => prev.filter(i => i.id !== id));
+      });
+      es.addEventListener(CLIPBOARD_REORDERED_EVENT, (ev: MessageEvent) => {
+        const data = JSON.parse((ev as MessageEvent).data) as { ids: string[] };
+        const order = data?.ids || [];
+        if (!order.length) return;
+        setItems(prev => {
+          const idIndex = new Map(order.map((id, idx) => [id, idx] as const));
+          const a = [...prev];
+          a.sort((x, y) => {
+            const ix = idIndex.has(x.id) ? idIndex.get(x.id)! : Number.POSITIVE_INFINITY;
+            const iy = idIndex.has(y.id) ? idIndex.get(y.id)! : Number.POSITIVE_INFINITY;
+            if (ix !== iy) return ix - iy; // items in payload first, by given order
+            // fallback: keep existing relative order
+            return 0;
+          });
+          return a;
+        });
       });
     } catch {}
     return () => { try { es?.close(); } catch {} };
@@ -298,7 +335,25 @@ export default function Home() {
         {/* Clipboard Items Grid (dynamic, client-only) */}
         <ClipboardGrid
           items={items}
-          onReorder={(newItems) => setItems(newItems)}
+          onReorder={async (newItems) => {
+            // Optimistic update
+            setItems(newItems);
+            try {
+              const ids = newItems.map(i => i.id);
+              const res = await authFetch('/api/clipboard/reorder', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids })
+              });
+              if (!res.ok) {
+                throw new Error('reorder failed');
+              }
+            } catch {
+              toast({ title: '排序保存失败', description: '稍后将自动恢复', variant: 'destructive' });
+              // Best-effort refresh to reflect server state
+              fetchItems(searchTermRef.current || '');
+            }
+          }}
           onSelectItem={(id: string) => handleSelectItem(id)}
           onCopy={copyToClipboard}
           onRequestDelete={(id: string) => { setPendingDeleteId(id); setDeleteOpen(true); }}

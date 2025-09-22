@@ -16,6 +16,7 @@ export type ClipboardItem = {
   content?: string;
   fileName?: string;
   fileSize?: number;
+  sortWeight?: number;
   createdAt: string;
   updatedAt: string;
 };

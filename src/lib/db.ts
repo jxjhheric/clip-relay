@@ -34,6 +34,7 @@ function ensureSchema(db: Database.Database) {
       content TEXT,
       fileName TEXT,
       fileSize INTEGER,
+      sortWeight INTEGER NOT NULL DEFAULT 0,
       contentType TEXT,
       inlineData BLOB,
       filePath TEXT,
@@ -57,6 +58,16 @@ function ensureSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS share_item_idx ON ShareLink (itemId);
     CREATE INDEX IF NOT EXISTS share_created_idx ON ShareLink (createdAt);
   `);
+
+  // Try to evolve schema when upgrading from older versions
+  try {
+    db.exec(`ALTER TABLE ClipboardItem ADD COLUMN sortWeight INTEGER NOT NULL DEFAULT 0;`);
+  } catch (e) {
+    // ignore if column already exists
+  }
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS clipboard_sort_idx ON ClipboardItem (sortWeight DESC, createdAt DESC, id DESC);`);
+  } catch {}
 }
 
 const sqlitePath = resolveSqlitePath();

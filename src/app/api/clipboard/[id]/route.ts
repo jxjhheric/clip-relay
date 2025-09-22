@@ -20,6 +20,7 @@ export async function GET(
         content: clipboardItems.content,
         fileName: clipboardItems.fileName,
         fileSize: clipboardItems.fileSize,
+        sortWeight: clipboardItems.sortWeight,
         contentType: clipboardItems.contentType,
         filePath: clipboardItems.filePath,
         createdAt: clipboardItems.createdAt,
