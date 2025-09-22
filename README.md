@@ -48,14 +48,16 @@ npm start
 `npm start` launches the custom server in production mode. Tables are created automatically on first start if the SQLite file is empty. The server listens on `PORT` (default 8087).
 
 ## Environment Variables
-Create a `.env` file based on the included example:
+Create a `.env` file (minimum):
 
 ```
-DATABASE_URL="file:../data/custom.db"
 CLIPBOARD_PASSWORD="change-me"
+# Optional: DATABASE_URL (override only if you need a custom location)
+# Locally defaults to ./data/custom.db; in Docker (WORKDIR=/app) defaults to /app/data/custom.db
+# DATABASE_URL="file:/app/data/custom.db"
 ```
-- `DATABASE_URL` points to the SQLite database file. Supports `file:relative/or/absolute/path.db` or a plain file path. If not set, the app falls back to `./data/custom.db` automatically.
 - `CLIPBOARD_PASSWORD` controls access to the UI; users must enter the password once per session.
+- `DATABASE_URL` is optional. It supports `file:relative/or/absolute/path.db` or a plain file path. If not set, the app falls back to `./data/custom.db` (and inside a container, that resolves to `/app/data/custom.db`).
 
 ## Docker
 The provided `Dockerfile` builds a slim, production-ready image. First-time empty volumes are auto-initialized at runtime.
@@ -77,7 +79,6 @@ docker pull $REGISTRY/$NAMESPACE/cloud-clipboard:sha-$GITHUB_SHA
 ### Run with Docker Compose (recommended)
 Create `.env` with at least:
 ```
-DATABASE_URL="file:../data/custom.db"
 CLIPBOARD_PASSWORD="change-me"
 ```
 
@@ -97,6 +98,10 @@ services:
     restart: unless-stopped
     pull_policy: always
 ```
+
+Notes:
+- When running in Docker, the app's working directory is `/app`, so the default SQLite path is `/app/data/custom.db`. The `volumes` mapping above persists that path on the host.
+- If you need a different path inside the container, set `DATABASE_URL="file:/app/data/custom.db"` (or another absolute path) and adjust the volume mapping accordingly.
 
 #### First-time init note
 No manual step is needed. The app creates tables on first start when the SQLite file is empty.

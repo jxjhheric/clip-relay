@@ -2,7 +2,8 @@ const SSE_KEY = '__clipboard_sse__' as const;
 
 type Client = {
   id: string;
-  write: (chunk: string) => void;
+  // May return a Promise (WritableStream writer.write returns a Promise)
+  write: (chunk: string) => void | Promise<void>;
   close: () => void;
 };
 
@@ -20,8 +21,20 @@ function getHub(): SSEHub {
       clients: new Map(),
       broadcast(event, data) {
         const payload = `event: ${event}\n` + `data: ${JSON.stringify(data)}\n\n`;
-        for (const c of hub.clients.values()) {
-          try { c.write(payload); } catch { /* ignore */ }
+        for (const [id, c] of hub.clients.entries()) {
+          try {
+            const res = c.write(payload) as any;
+            if (res && typeof res.catch === 'function') {
+              // If the stream is already closed, remove the client on rejection
+              res.catch(() => {
+                try { c.close(); } catch {}
+                hub.clients.delete(id);
+              });
+            }
+          } catch {
+            try { c.close(); } catch {}
+            hub.clients.delete(id);
+          }
         }
       },
       add(client) {
@@ -49,4 +62,3 @@ export function registerSseClient(id: string, write: (chunk: string) => void, cl
 export function unregisterSseClient(id: string) {
   getHub().remove(id);
 }
-

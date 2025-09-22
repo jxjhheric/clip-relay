@@ -45,14 +45,16 @@ npm start
 - 监听端口 `8087`（可通过 `PORT` 覆盖）。
 
 ## 环境变量
-在项目根目录创建 `.env`（最少包含以下两项）：
+在项目根目录创建 `.env`（最少包含以下一项）：
 
 ```
-DATABASE_URL="file:../data/custom.db"
 CLIPBOARD_PASSWORD="change-me"
+# 可选：DATABASE_URL（仅在需要自定义路径时设置）
+# 本地默认 ./data/custom.db；在 Docker 中（WORKDIR=/app）默认 /app/data/custom.db
+# DATABASE_URL="file:/app/data/custom.db"
 ```
-- `DATABASE_URL` 指向 SQLite 数据库文件。支持 `file:相对或绝对路径` 或直接文件路径。不设置时默认使用项目根的 `./data/custom.db`。
 - `CLIPBOARD_PASSWORD` 为访问口令。前端会将口令存入会话；服务端中间件会校验请求头或 Cookie。
+- `DATABASE_URL` 可选，支持 `file:相对或绝对路径` 或直接文件路径。不设置时默认使用项目根的 `./data/custom.db`（容器内即 `/app/data/custom.db`）。
 
 ### 本地构建镜像
 ```bash
@@ -62,7 +64,6 @@ docker build -t cloud-clipboard:latest -f Dockerfile .
 ### 使用 Docker Compose（推荐）
 1) 准备 `.env`：
 ```
-DATABASE_URL="file:../data/custom.db"
 CLIPBOARD_PASSWORD="change-me"
 ```
 2) Compose 示例（持久化数据目录）：
@@ -77,6 +78,10 @@ services:
       - /srv/cloud-clipboard/data:/app/data
     restart: unless-stopped
 ```
+
+说明：
+- 在 Docker 容器中，应用工作目录为 `/app`，默认数据库路径即 `/app/data/custom.db`。上面的 `volumes` 将该目录持久化到宿主机。
+- 如需修改容器内路径，可设置 `DATABASE_URL="file:/app/data/custom.db"`（或其他绝对路径），并相应调整卷映射。
 
 ## 数据存储与备份
 - 数据库：`data/custom.db`（SQLite，含元数据与小文件 BLOB）
