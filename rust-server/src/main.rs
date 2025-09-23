@@ -340,8 +340,19 @@ struct ClipboardItem {
 }
 
 fn ensure_data_dirs() -> anyhow::Result<PathBuf> {
+    // Always prefer repository root's `data/` regardless of current working directory.
+    // Detect repo root by finding an ancestor containing `rust-server/Cargo.toml`.
     let cwd = env::current_dir()?;
-    let data_dir = cwd.join("data");
+    let mut repo_root: Option<PathBuf> = None;
+    for anc in cwd.ancestors() {
+        let marker = anc.join("rust-server").join("Cargo.toml");
+        if marker.exists() {
+            repo_root = Some(anc.to_path_buf());
+            break;
+        }
+    }
+    let base = repo_root.unwrap_or(cwd);
+    let data_dir = base.join("data");
     stdfs::create_dir_all(data_dir.join("uploads"))?;
     Ok(data_dir)
 }
