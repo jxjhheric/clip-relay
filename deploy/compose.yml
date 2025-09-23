@@ -1,21 +1,24 @@
 version: "3.9"
 
-# Quick-start Compose for Cloud Clipboard
-# 1) Copy this file to your server (e.g., /srv/cloud-clipboard/compose.yml)
+# Quick-start Compose for Clip Relay
+# 1) Copy this file to your server (e.g., /srv/clip-relay/compose.yml)
 # 2) Create .env alongside with DATABASE_URL and CLIPBOARD_PASSWORD
 # 3) Choose the image tag: prefer sha-<commit> for reproducible deploys
 
 services:
   app:
+    # Rust API + static frontend image
     # Replace with your registry and namespace
     # Examples:
-    #   ghcr.io/OWNER/REPO/cloud-clipboard:sha-<GITHUB_SHA>
-    #   ghcr.io/OWNER/REPO/cloud-clipboard:latest
-    #   ghcr.io/OWNER/REPO/cloud-clipboard:slim-<GITHUB_SHA>
-    image: REGISTRY/NAMESPACE/cloud-clipboard:latest
+    #   ghcr.io/OWNER/REPO/clip-relay:sha-<GITHUB_SHA>
+    #   ghcr.io/OWNER/REPO/clip-relay:latest
+    image: REGISTRY/NAMESPACE/clip-relay:latest
     ports:
-      - "8087:8087"
-    env_file: .env
+      - "8087:8087"   # container listens on 8087 by default
+    env_file: .env      # should contain CLIPBOARD_PASSWORD
+    # Optionally override port:
+    # environment:
+    #   - PORT=8087
     volumes:
       - ./data:/app/data
     restart: unless-stopped
@@ -24,4 +27,3 @@ services:
 # .env example:
 # DATABASE_URL="file:../data/custom.db"
 # CLIPBOARD_PASSWORD="change-me"
-

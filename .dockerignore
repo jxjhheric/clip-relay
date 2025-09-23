@@ -14,6 +14,7 @@ node_modules
 # Build artifacts
 .next
 dist
+/.next-export
 npm-debug.log
 *.tsbuildinfo
 
@@ -26,3 +27,6 @@ db/
 
 # VSCode
 .vscode
+
+# Rust build cache
+/rust-server/target

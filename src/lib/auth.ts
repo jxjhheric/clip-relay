@@ -1,5 +1,7 @@
 // 认证相关的工具函数
 
+const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || '').replace(/\/$/, '');
+
 const PASSWORD_STORAGE_KEY = 'clipboard_password';
 
 // 获取认证头
@@ -22,7 +24,7 @@ export function getStoredPassword(): string | null {
 // 验证密码
 export async function verifyPassword(password: string): Promise<boolean> {
   try {
-    const response = await fetch('/api/auth/verify', {
+    const response = await fetch(`${API_BASE}/api/auth/verify`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -50,12 +52,14 @@ export function clearPassword() {
 
 // 带认证的fetch函数
 export async function authFetch(url: string, options: RequestInit = {}) {
+  // 允许传入以 / 开头的相对 API 路径
+  const fullUrl = url.startsWith('http') ? url : `${API_BASE}${url}`;
   const headers = {
     ...getAuthHeaders(),
     ...options.headers,
   };
   
-  return fetch(url, {
+  return fetch(fullUrl, {
     ...options,
     headers,
   });

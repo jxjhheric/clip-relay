@@ -30,6 +30,7 @@ const CreateShareDialog = dynamic(() => import('@/components/clipboard/CreateSha
 type ClipboardItem = GridItem;
 
 export default function Home() {
+  const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || '').replace(/\/$/, '');
   const [items, setItems] = useState<ClipboardItem[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -165,7 +166,8 @@ export default function Home() {
     if (!authenticated) return;
     let es: EventSource | null = null;
     try {
-      es = new EventSource('/api/events');
+      // include credentials so auth cookie works on cross-origin if configured
+      es = new EventSource(`${API_BASE}/api/events`, { withCredentials: true } as any);
       es.addEventListener(CLIPBOARD_CREATED_EVENT, (ev: MessageEvent) => {
         const newItem = JSON.parse((ev as MessageEvent).data) as ClipboardItem;
         if (searchTermRef.current) {
@@ -300,7 +302,7 @@ export default function Home() {
         {/* Header */}
         <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between mb-6">
           <div>
-            <h1 className="text-3xl font-bold">云剪贴板</h1>
+            <h1 className="text-3xl font-bold">Clip Relay</h1>
             <p className="text-muted-foreground mt-1">管理您的剪贴板内容</p>
           </div>
           
@@ -427,7 +429,7 @@ function AuthDialog({ onSuccess }: { onSuccess: () => void }) {
     if (isValid) {
       toast({
         title: "认证成功",
-        description: "欢迎使用云剪贴板",
+        description: "欢迎使用 Clip Relay",
       });
       onSuccess();
     } else {

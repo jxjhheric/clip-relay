@@ -1,8 +1,8 @@
-# Cloud Clipboard
+# Clip Relay
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-A self-hosted cloud clipboard for quickly sharing text snippets, files, and images across devices. The app is built with Next.js and provides realtime updates, drag-and-drop uploads, and lightweight authentication suitable for personal or small-team use.
+A self-hosted cloud clipboard for quickly sharing text snippets, files, and images across devices. The UI is a static Next.js export and the server is implemented in Rust (axum). It provides realtime updates, drag-and-drop uploads, and lightweight authentication suitable for personal or small-team use.
 
 ## Features
 - Realtime clipboard synchronization via SSE (Server-Sent Events) and SQLite
@@ -17,63 +17,61 @@ A self-hosted cloud clipboard for quickly sharing text snippets, files, and imag
 - Detail dialog: ![Detail](public/screenshots/detail.png)
 
 ## Architecture Overview
-- **Frontend**: Next.js App Router (React 19) with shadcn/ui component primitives and Tailwind CSS 4 for styling (`src/app`, `src/components/ui`)
-- **Server**: Custom Node entry (`server.ts`) bootstraps Next.js; realtime events via SSE at `/api/events`
-- **Data**: SQLite via better-sqlite3 + drizzle-orm (`src/lib/db.ts`, `src/lib/db/schema.ts`)
-- **Auth**: Minimal bearer password check handled in `src/app/api/auth/verify/route.ts`
-- **Realtime**: SSE events broadcast create/delete actions (`src/app/api/events/route.ts`, `src/lib/socket-events.ts`)
+- **Frontend**: Next.js App Router (React 19), exported statically (no SSR) with Tailwind CSS 4 and shadcn/ui (`src/app`, `src/components/ui`).
+- **Server**: Rust (axum) in `rust-server/` serves the API and static assets; realtime events via SSE at `/api/events`.
+- **Data**: SQLite via `rusqlite` (bundled), persisted under `data/` (uploads under `data/uploads/`).
+- **Auth**: Minimal bearer password + cookie managed by the Rust server at `/api/auth/verify`.
+- **Realtime**: SSE events broadcast create/delete/reorder.
 
 ## Getting Started
 ### Prerequisites
-- Node.js 20+
+- Node.js 20+ (build the static frontend)
 - npm 10+
+- Rust toolchain (if running server locally without Docker)
 
-### Install dependencies
+### Install frontend dependencies
 ```bash
 npm install
 ```
-> Use `npm install` to sync dependencies. If you pin lockfiles in CI, prefer a clean `npm ci` run after updating the lockfile.
 
-### Development
+### Local run (Rust server + static UI)
 ```bash
-npm run dev
-```
-The server uses `nodemon` + `tsx` to reload `server.ts`. Open http://localhost:8087 in your browser (or set `PORT=xxxx`).
-
-### Production build
-```bash
+# 1) Build static export to .next-export/
 npm run build
-npm start
+
+# 2) Start Rust API server (serves static UI too)
+npm run rust:dev
 ```
-`npm start` launches the custom server in production mode. Tables are created automatically on first start if the SQLite file is empty. The server listens on `PORT` (default 8087).
+Then open http://localhost:8087 (or set `PORT`). For iterative UI development, you can run Next’s dev server separately and point the UI to the Rust API using `NEXT_PUBLIC_API_BASE`.
 
 ## Environment Variables
 Create a `.env` file (minimum):
 
 ```
 CLIPBOARD_PASSWORD="change-me"
-# Optional: DATABASE_URL (override only if you need a custom location)
-# Locally defaults to ./data/custom.db; in Docker (WORKDIR=/app) defaults to /app/data/custom.db
-# DATABASE_URL="file:/app/data/custom.db"
+# Optional: override default locations/ports
+# STATIC_DIR="/app/.next-export"   # where static UI is served from
+# PORT=8087                         # server listen port
 ```
-- `CLIPBOARD_PASSWORD` controls access to the UI; users must enter the password once per session.
-- `DATABASE_URL` is optional. It supports `file:relative/or/absolute/path.db` or a plain file path. If not set, the app falls back to `./data/custom.db` (and inside a container, that resolves to `/app/data/custom.db`).
+- `CLIPBOARD_PASSWORD` controls access to the UI.
+- `STATIC_DIR` is optional; by default the server tries `.next-export/`, `out/`, or `../.next-export`.
+- The SQLite database lives under `./data/custom.db` by default (auto-created). No `DATABASE_URL` is required.
 
 ## Docker
-The provided `Dockerfile` builds a slim, production-ready image. First-time empty volumes are auto-initialized at runtime.
+The provided `Dockerfile` builds a slim Rust runtime image including the static Next export. First-time empty volumes are auto-initialized by the server.
 
 ### Build locally
 ```bash
-docker build -t cloud-clipboard:latest -f Dockerfile .
+docker build -t clip-relay:latest -f Dockerfile .
 ```
 
 ### Pull prebuilt images
 ```bash
 # Replace with your registry/namespace used in CI
-docker pull $REGISTRY/$NAMESPACE/cloud-clipboard:latest
+docker pull $REGISTRY/$NAMESPACE/clip-relay:latest
 
 # Versioned (immutable) tags per commit SHA are also published:
-docker pull $REGISTRY/$NAMESPACE/cloud-clipboard:sha-$GITHUB_SHA
+docker pull $REGISTRY/$NAMESPACE/clip-relay:sha-$GITHUB_SHA
 ```
 
 ### Run with Docker Compose (recommended)
@@ -87,21 +85,21 @@ Compose example (map the data directory for persistence):
 services:
   app:
     # For reproducible deploys, prefer the SHA tag:
-    # image: $REGISTRY/$NAMESPACE/cloud-clipboard:sha-$GITHUB_SHA
+    # image: $REGISTRY/$NAMESPACE/clip-relay:sha-$GITHUB_SHA
     # Or track latest for convenience:
-    image: $REGISTRY/$NAMESPACE/cloud-clipboard:latest
+    image: $REGISTRY/$NAMESPACE/clip-relay:latest
     ports:
-      - "8087:8087"
+      - "8087:8087"  # Rust server listens on 8087 by default
     env_file: .env
     volumes:
-      - /srv/cloud-clipboard/data:/app/data
+      - /srv/clip-relay/data:/app/data
     restart: unless-stopped
     pull_policy: always
 ```
 
 Notes:
-- When running in Docker, the app's working directory is `/app`, so the default SQLite path is `/app/data/custom.db`. The `volumes` mapping above persists that path on the host.
-- If you need a different path inside the container, set `DATABASE_URL="file:/app/data/custom.db"` (or another absolute path) and adjust the volume mapping accordingly.
+- The working directory is `/app`. The server writes SQLite DB to `/app/data/custom.db` and uploads to `/app/data/uploads`.
+- The static UI is embedded at build time under `/app/.next-export`.
 
 #### First-time init note
 No manual step is needed. The app creates tables on first start when the SQLite file is empty.
@@ -117,12 +115,11 @@ The GitHub Actions workflow is now manual to avoid building on every push. Trigg
 ## Project Structure
 ```
 src/
-├─ app/              # App Router pages, API routes, layout, global styles
+├─ app/              # App Router pages, layout, global styles
 ├─ components/ui/    # Reusable shadcn/ui wrappers
 ├─ hooks/            # Custom hooks (toast, mobile detection)
-└─ lib/              # Auth, DB, SSE helpers, util functions
-src/lib/db/schema.ts # Drizzle ORM schema (SQLite)
-server.ts            # Custom Next.js server entry point (SSE realtime)
+└─ lib/              # Auth, SSE helpers, util functions
+rust-server/         # Rust (axum) API server (serves static UI)
 ```
 
 ## License

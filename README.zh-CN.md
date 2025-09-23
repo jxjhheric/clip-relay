@@ -1,8 +1,8 @@
-# 云剪贴板（Cloud Clipboard）
+# Clip Relay
 
 [English](README.md) | 简体中文
 
-一个自托管的云剪贴板应用，用于在设备间快速分享文本、图片和文件。基于 Next.js 构建，支持实时同步、拖拽上传和轻量认证，适合个人或小团队使用。
+Clip Relay 是一个自托管的剪贴板应用，用于在设备间快速分享文本、图片和文件。采用 Rust 服务端与 Next.js 静态前端，支持实时同步、拖拽上传和轻量认证，适合个人或小团队使用。
 
 - 实时同步：通过 SSE（Server-Sent Events）广播新建/删除事件
 - 拖拽上传：小文件内联存储，大文件落地到磁盘
@@ -14,27 +14,29 @@
 - 详情对话框：![Detail](public/screenshots/detail.png)
 
 ## 架构概览
-- 前端：Next.js App Router（React 19），组件库 `src/app`, `src/components/ui`
-- 服务端：自定义入口 `server.ts`，通过 `/api/events` 提供 SSE 实时通道
- - 数据：SQLite（better-sqlite3 + drizzle-orm，`src/lib/db.ts`, `src/lib/db/schema.ts`）
-- 认证：`/api/auth/verify` 验证口令，并写入会话 Cookie
-- 实时：`src/app/api/events/route.ts`, `src/lib/socket-events.ts`
+- 前端：Next.js App Router（React 19），静态导出（无 SSR），目录 `src/app`, `src/components/ui`
+- 服务端：Rust（axum）位于 `rust-server/`，提供 API 并同时服务静态前端；SSE 实时通道位于 `/api/events`
+- 数据：SQLite（`rusqlite`，自带静态链接），持久化目录 `data/`（大文件位于 `data/uploads/`）
+- 认证：Rust 端 `/api/auth/verify` 验证口令并写入 Cookie
 
 ## 快速开始（本地开发）
 ### 依赖
-- Node.js 20+
+- Node.js 20+（用于构建静态前端）
 - npm 10+
+- Rust 工具链（如需本地直接运行服务端）
 
-### 安装依赖
+### 安装依赖并运行
 ```bash
+# 安装前端依赖
 npm install
-```
 
-### 启动开发服务
-```bash
-npm run dev
+# 1) 构建静态前端到 .next-export/
+npm run build
+
+# 2) 启动 Rust 服务（同时服务静态前端）
+npm run rust:dev
 ```
-打开 `http://localhost:8087`。
+默认监听 `http://localhost:8087`（可通过 `PORT` 覆盖）。如需前端热开发，可单独运行 Next 开发服并通过 `NEXT_PUBLIC_API_BASE` 指向 Rust API。
 
 ## 生产构建与运行
 ```bash
@@ -49,16 +51,17 @@ npm start
 
 ```
 CLIPBOARD_PASSWORD="change-me"
-# 可选：DATABASE_URL（仅在需要自定义路径时设置）
-# 本地默认 ./data/custom.db；在 Docker 中（WORKDIR=/app）默认 /app/data/custom.db
-# DATABASE_URL="file:/app/data/custom.db"
+# 可选：覆盖默认设置
+# STATIC_DIR="/app/.next-export"   # 静态前端目录
+# PORT=8087                         # 监听端口
 ```
-- `CLIPBOARD_PASSWORD` 为访问口令。前端会将口令存入会话；服务端中间件会校验请求头或 Cookie。
-- `DATABASE_URL` 可选，支持 `file:相对或绝对路径` 或直接文件路径。不设置时默认使用项目根的 `./data/custom.db`（容器内即 `/app/data/custom.db`）。
+- `CLIPBOARD_PASSWORD` 为访问口令。
+- `STATIC_DIR` 可选；默认会自动探测 `.next-export/`、`out/` 等目录。
+- SQLite 默认位于 `./data/custom.db`（首次启动自动创建），无需设置 `DATABASE_URL`。
 
 ### 本地构建镜像
 ```bash
-docker build -t cloud-clipboard:latest -f Dockerfile .
+docker build -t clip-relay:latest -f Dockerfile .
 ```
 
 ### 使用 Docker Compose（推荐）
@@ -70,18 +73,17 @@ CLIPBOARD_PASSWORD="change-me"
 ```
 services:
   app:
-    image: <your-registry>/cloud-clipboard:latest
+    image: <your-registry>/clip-relay:latest
     ports:
-      - "8087:8087"
+      - "8087:8087"  # Rust 服务默认 8087
     env_file: .env
     volumes:
-      - /srv/cloud-clipboard/data:/app/data
+      - /srv/clip-relay/data:/app/data
     restart: unless-stopped
 ```
 
 说明：
 - 在 Docker 容器中，应用工作目录为 `/app`，默认数据库路径即 `/app/data/custom.db`。上面的 `volumes` 将该目录持久化到宿主机。
-- 如需修改容器内路径，可设置 `DATABASE_URL="file:/app/data/custom.db"`（或其他绝对路径），并相应调整卷映射。
 
 ## 数据存储与备份
 - 数据库：`data/custom.db`（SQLite，含元数据与小文件 BLOB）
@@ -96,13 +98,12 @@ services:
 ## 目录结构
 ```
 src/
-├─ app/              # App Router 页面、API 路由、layout、全局样式
+├─ app/              # App Router 页面、layout、全局样式
 ├─ components/ui/    # 可复用 UI 组件封装
 ├─ components/clipboard/ # 剪贴板业务组件
 ├─ hooks/            # 自定义 hooks（toast 等）
-└─ lib/              # 鉴权、数据库、SSE、工具函数
-src/lib/db/schema.ts # Drizzle SQLite 表结构定义
-server.ts            # 自定义 Next.js 服务器入口（SSE 实时）
+└─ lib/              # 鉴权、SSE、工具函数
+rust-server/         # Rust (axum) API 服务（同时服务静态前端）
 ```
 
 ## 许可证

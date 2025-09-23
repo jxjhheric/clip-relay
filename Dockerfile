@@ -1,57 +1,65 @@
-# ---- Base Stage ----
-FROM node:20-alpine AS base
-
+##############################
+# Frontend build (Next export)
+##############################
+FROM node:20-bookworm-slim AS frontend
 WORKDIR /app
 
-# ---- Dependencies Stage ----
-FROM base AS deps
-
+# Install deps (prod only is fine for export)
 COPY package.json package-lock.json ./
-# Install native build tools for better-sqlite3, then install deps (incl. dev)
-RUN apk add --no-cache python3 make g++ \
- && npm install --include=dev
+# Install all deps (including dev) for build-time tools like Tailwind/PostCSS
+RUN npm ci
 
-# ---- Builder Stage ----
-FROM deps AS builder
+# Copy sources needed for static export
+COPY next.config.ts ./
+COPY tsconfig.json ./
+COPY postcss.config.mjs ./
+COPY eslint.config.mjs ./
+COPY components.json ./
+COPY public ./public
+COPY src ./src
 
-COPY . .
-
-# Ensure data dir exists so db file can be created at build (optional)
-RUN mkdir -p /app/data /app/data/uploads
-
-# Build Next (postbuild compiles custom server)
-RUN npm run build \
- && rm -rf .next/cache \
- && npm cache clean --force
-
-# ---- Runner Stage (Slim) ----
-FROM node:20-alpine AS runner
-
+# Produce static export to .next-export
 ENV NODE_ENV=production
+RUN npm run build && rm -rf .next && npm cache clean --force
+
+##############################
+# Rust build
+##############################
+FROM rust:1-bookworm AS rust-builder
 WORKDIR /app
 
-# Copy minimal Next runtime with its pruned node_modules
-COPY --from=builder /app/.next/standalone ./
+# Cache deps first
+COPY rust-server/Cargo.toml rust-server/Cargo.lock ./rust-server/
+RUN mkdir -p rust-server/src && echo "fn main(){}" > rust-server/src/main.rs \
+ && cargo build --manifest-path rust-server/Cargo.toml --release \
+ && rm -rf rust-server/target/release/deps/clip_relay*
 
-# Static assets required by Next
-COPY --from=builder /app/.next/static ./.next/static
+# Build with sources
+COPY rust-server ./rust-server
+RUN cargo build --manifest-path rust-server/Cargo.toml --release
 
-# Public assets
-COPY --from=builder /app/public ./public
+##############################
+# Runtime image (Debian slim)
+##############################
+FROM debian:bookworm-slim AS runtime
+WORKDIR /app
 
-# Custom server compiled output and (optionally) pre-baked DB dir
-COPY --from=builder /app/dist ./dist
+RUN useradd -u 10001 -r -s /sbin/nologin appuser \
+ && mkdir -p /app/data/uploads \
+ && chown -R appuser:appuser /app
 
-# Ensure uploads dir exists (safe if already copied)
-RUN mkdir -p /app/data /app/data/uploads
+# Copy static export
+COPY --from=frontend /app/.next-export /app/.next-export
 
-# Overlay Next compiled vendor modules (e.g., webpack) that are referenced at runtime
-# but may be pruned in the minimal standalone bundle. This is much smaller than
-# copying the whole next package while fixing the module-not-found error.
-COPY --from=deps /app/node_modules/next/dist/compiled /app/node_modules/next/dist/compiled
+# Copy Rust server binary
+COPY --from=rust-builder /app/rust-server/target/release/clip-relay /usr/local/bin/clip-relay
+
+# Environment
+ENV RUST_LOG=info \
+    STATIC_DIR=/app/.next-export \
+    PORT=8087
 
 EXPOSE 8087
+USER appuser
 
-# Database tables are created at runtime on first start using better-sqlite3.
-
-CMD ["node", "dist/server.js"]
+CMD ["/usr/local/bin/clip-relay"]

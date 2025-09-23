@@ -25,6 +25,7 @@ type ShareMeta = {
 };
 
 export default function ShareClient({ token }: { token: string }) {
+  const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || '').replace(/\/$/, '');
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [meta, setMeta] = useState<ShareMeta | null>(null);
@@ -34,7 +35,7 @@ export default function ShareClient({ token }: { token: string }) {
   const fetchMeta = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`/api/share/${token}`);
+      const res = await fetch(`${API_BASE}/api/share/${token}`, { credentials: 'include' });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || 'failed');
       setMeta(data);
@@ -53,10 +54,11 @@ export default function ShareClient({ token }: { token: string }) {
   const verify = async () => {
     try {
       setSubmitting(true);
-      const res = await fetch(`/api/share/${token}/verify`, {
+      const res = await fetch(`${API_BASE}/api/share/${token}/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: pwd }),
+        credentials: 'include',
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || 'verify failed');
@@ -138,7 +140,7 @@ export default function ShareClient({ token }: { token: string }) {
                 <pre className="whitespace-pre-wrap text-sm">{meta.item.content}</pre>
               </div>
               <div className="mt-3">
-                <a className="underline" href={`/api/share/${token}/download`}>下载为文本文件</a>
+                <a className="underline" href={`${API_BASE}/api/share/${token}/download`}>下载为文本文件</a>
               </div>
             </div>
           )}
@@ -146,7 +148,7 @@ export default function ShareClient({ token }: { token: string }) {
           {meta.item.type === 'IMAGE' && (
             <div>
               <img
-                src={`/api/share/${token}/file`}
+                src={`${API_BASE}/api/share/${token}/file`}
                 alt={meta.item.fileName || 'image'}
                 className="max-h-[60vh] rounded"
                 loading="lazy"
@@ -156,7 +158,7 @@ export default function ShareClient({ token }: { token: string }) {
                 {meta.item.fileName} {fileSize(meta.item.fileSize)}
               </div>
               <div className="mt-3">
-                <a className="underline" href={`/api/share/${token}/download`}>下载图片</a>
+                <a className="underline" href={`${API_BASE}/api/share/${token}/download`}>下载图片</a>
               </div>
             </div>
           )}
@@ -165,7 +167,7 @@ export default function ShareClient({ token }: { token: string }) {
             <div>
               <div className="text-sm">{meta.item.fileName} {fileSize(meta.item.fileSize)}</div>
               <div className="mt-3">
-                <a className="underline" href={`/api/share/${token}/download`}>下载文件</a>
+                <a className="underline" href={`${API_BASE}/api/share/${token}/download`}>下载文件</a>
               </div>
             </div>
           )}

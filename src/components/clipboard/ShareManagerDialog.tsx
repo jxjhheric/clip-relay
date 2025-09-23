@@ -47,7 +47,6 @@ export default function ShareManagerDialog({ open, onOpenChange }: { open: boole
 
   useEffect(() => {
     if (open) load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, includeRevoked, page]);
 
   const revoke = async (token: string) => {
@@ -84,7 +83,6 @@ export default function ShareManagerDialog({ open, onOpenChange }: { open: boole
     // Fallback UX for HTTP or restricted browsers
     try {
       const promptText = isSecure() ? "浏览器限制或权限不足，请手动复制：" : "当前为 HTTP 环境，系统复制受限，请手动复制：";
-      // eslint-disable-next-line no-alert
       window.prompt(promptText, full);
     } catch {}
     toast({ title: "请手动复制", variant: "destructive" });

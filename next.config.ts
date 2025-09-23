@@ -4,21 +4,13 @@ import type { NextConfig } from "next";
 const isStrictBuild = process.env.NODE_ENV === 'production' || process.env.CI === 'true';
 
 const nextConfig: NextConfig = {
-  output: "standalone",
+  output: 'export',
+  distDir: process.env.NEXT_DIST_DIR || '.next-export',
   typescript: {
     ignoreBuildErrors: !isStrictBuild,
   },
-  // 禁用 Next.js 热重载，由 nodemon 处理重编译（如需 HMR，请移除此段）
   reactStrictMode: false,
-  webpack: (config, { dev }) => {
-    if (dev) {
-      // 禁用 webpack 的热模块替换
-      config.watchOptions = {
-        ignored: ['**/*'], // 忽略所有文件变化
-      };
-    }
-    return config;
-  },
+  webpack: (config) => config,
   eslint: {
     // 构建时是否忽略 ESLint 错误
     ignoreDuringBuilds: !isStrictBuild,

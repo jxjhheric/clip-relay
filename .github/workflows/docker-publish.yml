@@ -26,5 +26,5 @@ jobs:
           file: Dockerfile
           push: true
           tags: |
-            ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/cloud-clipboard:latest
-            ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/cloud-clipboard:sha-${{ github.sha }}
+            ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/clip-relay:latest
+            ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/clip-relay:sha-${{ github.sha }}
