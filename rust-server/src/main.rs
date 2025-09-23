@@ -23,7 +23,7 @@ use rusqlite::{Connection, params};
 use time::OffsetDateTime;
 use uuid::Uuid;
 use std::fs as stdfs;
-use std::path::{Path, PathBuf};
+use std::path::{Path as StdPath, PathBuf};
 // use mime_guess::from_path as guess_mime;
 use sha2::{Digest, Sha256};
 use rand::RngCore;
@@ -306,7 +306,7 @@ fn ensure_data_dirs() -> anyhow::Result<PathBuf> {
     Ok(data_dir)
 }
 
-fn init_db(data_dir: &Path) -> anyhow::Result<Connection> {
+fn init_db(data_dir: &StdPath) -> anyhow::Result<Connection> {
     let db_path = data_dir.join("custom.db");
     let conn = Connection::open(db_path)?;
     conn.execute_batch(
