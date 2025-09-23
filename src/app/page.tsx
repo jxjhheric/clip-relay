@@ -17,7 +17,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
-import { authFetch, verifyPassword, clearPassword } from '@/lib/auth';
+import { authFetch, verifyPassword, clearPassword, getStoredPassword } from '@/lib/auth';
 import { CLIPBOARD_CREATED_EVENT, CLIPBOARD_DELETED_EVENT, CLIPBOARD_REORDERED_EVENT } from '@/lib/socket-events';
 import type { ClipboardItem as GridItem } from '@/components/clipboard/ClipboardGrid';
 
