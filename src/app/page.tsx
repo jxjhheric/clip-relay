@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { FileText, Search } from 'lucide-react';
+import { FileText, Search, Github, Bug, Menu, LogOut } from 'lucide-react';
 import { 
   AlertDialog,
   AlertDialogAction,
@@ -17,7 +17,9 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
-import { authFetch, verifyPassword, clearPassword, getStoredPassword } from '@/lib/auth';
+import { authFetch, verifyPassword, getStoredPassword, logout } from '@/lib/auth';
+import ThemeSelect from '@/components/ThemeSelect';
+import { Sheet, SheetContent, SheetFooter, SheetHeader } from '@/components/ui/sheet';
 import { CLIPBOARD_CREATED_EVENT, CLIPBOARD_DELETED_EVENT, CLIPBOARD_REORDERED_EVENT } from '@/lib/socket-events';
 import type { ClipboardItem as GridItem } from '@/components/clipboard/ClipboardGrid';
 
@@ -31,12 +33,16 @@ type ClipboardItem = GridItem;
 
 export default function Home() {
   const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || '').replace(/\/$/, '');
+  const REPO_URL = 'https://github.com/paopaoandlingyia/clip-relay';
+  const ISSUES_URL = 'https://github.com/paopaoandlingyia/clip-relay/issues';
   const [items, setItems] = useState<ClipboardItem[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [selectedItem, setSelectedItem] = useState<ClipboardItem | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
   const [shareMgrOpen, setShareMgrOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(true);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [shareItemId, setShareItemId] = useState<string | null>(null);
@@ -53,9 +59,17 @@ export default function Home() {
 
   // DnD moved into ClipboardGrid
 
-  // 首次加载清除残留密码，避免自动登录
+  // 静默鉴权：若已有 Cookie，则自动进入，无需再次输入
   useEffect(() => {
-    clearPassword();
+    (async () => {
+      try {
+        const res = await fetch('/api/health', { credentials: 'include' });
+        if (res.ok) {
+          setAuthenticated(true);
+        }
+      } catch {}
+      setCheckingAuth(false);
+    })();
   }, []);
 
   // 预加载详情弹窗组件，避免首次点击时的分包加载延迟
@@ -281,6 +295,13 @@ export default function Home() {
   };
 
   if (!authenticated) {
+    if (checkingAuth) {
+      return (
+        <div className="flex items-center justify-center min-h-screen">
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-gray-900"></div>
+        </div>
+      );
+    }
     return (
       <AuthDialog
         onSuccess={() => {
@@ -303,7 +324,13 @@ export default function Home() {
     <div className="min-h-screen bg-background p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between mb-6">
+        <div className="relative flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between mb-6">
+          {/* Mobile-only: single settings button at top-right */}
+          <div className="sm:hidden absolute top-2 right-2 flex items-center gap-1">
+            <Button variant="ghost" size="icon" title="设置" onClick={() => setSettingsOpen(true)}>
+              <Menu className="h-5 w-5" />
+            </Button>
+          </div>
           <div>
             <h1 className="text-3xl font-bold">Clip Relay</h1>
             <p className="text-muted-foreground mt-1">管理您的剪贴板内容</p>
@@ -328,14 +355,21 @@ export default function Home() {
                 <span className="hidden sm:inline">搜索</span>
               </Button>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
               <AddItemDialog onItemAdded={() => fetchItems(searchTerm)} />
               <Button variant="outline" onClick={() => setShareMgrOpen(true)}>
                 分享管理
               </Button>
+              {/* Desktop settings */}
+              <Button variant="ghost" size="icon" title="设置" className="hidden sm:inline-flex" onClick={() => setSettingsOpen(true)}>
+                <Menu className="h-5 w-5" />
+              </Button>
             </div>
           </div>
         </div>
+
+        {/* Settings Drawer */}
+        <SettingsDrawer open={settingsOpen} onOpenChange={setSettingsOpen} repoUrl={REPO_URL} issuesUrl={ISSUES_URL} onLogout={() => { setAuthenticated(false); setSelectedItem(null); }} />
 
         {/* Clipboard Items Grid (dynamic, client-only) */}
         <ClipboardGrid
@@ -464,6 +498,64 @@ function AuthDialog({ onSuccess }: { onSuccess: () => void }) {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+// 设置抽屉
+function SettingsDrawer({
+  open,
+  onOpenChange,
+  repoUrl,
+  issuesUrl,
+  onLogout,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  repoUrl: string;
+  issuesUrl: string;
+  onLogout: () => void;
+}) {
+  const { toast } = useToast();
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right">
+        <SheetHeader>
+          <div className="text-lg font-semibold">设置</div>
+        </SheetHeader>
+        <div className="px-4 py-2 space-y-2">
+          <Button variant="ghost" className="w-full justify-start" asChild>
+            <a href={repoUrl} target="_blank" rel="noopener noreferrer">
+              <Github className="h-4 w-4 mr-2" /> GitHub 仓库
+            </a>
+          </Button>
+          <Button variant="ghost" className="w-full justify-start" asChild>
+            <a href={issuesUrl} target="_blank" rel="noopener noreferrer">
+              <Bug className="h-4 w-4 mr-2" /> 提交问题
+            </a>
+          </Button>
+          <div className="flex items-center justify-between py-2">
+            <div className="text-sm">主题</div>
+            <ThemeSelect />
+          </div>
+        </div>
+        <SheetFooter>
+          <Button
+            variant="destructive"
+            className="w-full justify-center"
+            onClick={async () => {
+              try {
+                await logout();
+                toast({ title: '已退出登录' });
+                onLogout();
+              } catch {}
+              onOpenChange(false);
+            }}
+          >
+            <LogOut className="h-4 w-4 mr-2" /> 退出登录
+          </Button>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 }
 

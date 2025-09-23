@@ -78,6 +78,7 @@ async fn main() -> anyhow::Result<()> {
 
     let public = Router::new()
         .route("/auth/verify", post(auth_verify))
+        .route("/auth/logout", post(auth_logout))
         .route("/healthz", get(health));
 
     let api = Router::new().nest("/api", protected.merge(public));
@@ -194,9 +195,28 @@ async fn auth_verify(State(state): State<AppState>, headers: HeaderMap, Json(bod
     let secure = scheme == "https";
     let samesite_env = env::var("AUTH_COOKIE_SAMESITE").unwrap_or_else(|_| "Lax".to_string());
     let samesite = match samesite_env.to_ascii_lowercase().as_str() { "none" => "None", "strict" => "Strict", _ => "Lax" };
+    // Cookie 有效期：2 小时（7200 秒）
     let cookie = format!(
-        "auth={}; Max-Age=604800; Path=/; SameSite={}; HttpOnly{}",
+        "auth={}; Max-Age=7200; Path=/; SameSite={}; HttpOnly{}",
         expected,
+        samesite,
+        if secure || samesite == "None" { "; Secure" } else { "" }
+    );
+    let mut res = Json(serde_json::json!({"success": true})).into_response();
+    res.headers_mut().insert("set-cookie", HeaderValue::from_str(&cookie).unwrap());
+    res
+}
+
+async fn auth_logout(headers: HeaderMap) -> Response {
+    // 与登录时保持相同的 Cookie 属性
+    let forwarded = headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok());
+    let scheme = forwarded.unwrap_or("http").to_ascii_lowercase();
+    let secure = scheme == "https";
+    let samesite_env = env::var("AUTH_COOKIE_SAMESITE").unwrap_or_else(|_| "Lax".to_string());
+    let samesite = match samesite_env.to_ascii_lowercase().as_str() { "none" => "None", "strict" => "Strict", _ => "Lax" };
+    // 立刻过期
+    let cookie = format!(
+        "auth=; Max-Age=0; Path=/; SameSite={}; HttpOnly{}",
         samesite,
         if secure || samesite == "None" { "; Secure" } else { "" }
     );

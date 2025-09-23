@@ -59,9 +59,20 @@ export async function authFetch(url: string, options: RequestInit = {}) {
     ...getAuthHeaders(),
     ...options.headers,
   };
-  
+  // 默认携带 Cookie，便于依赖服务器下发的 auth Cookie（跨域需 CORS 允许）
+  const creds: RequestCredentials | undefined = options.credentials || 'include';
+
   return fetch(fullUrl, {
     ...options,
     headers,
+    credentials: creds,
   });
+}
+
+// 登出（清理本地存储，同时请求服务端清除 Cookie）
+export async function logout(): Promise<void> {
+  try {
+    await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+  } catch {}
+  clearPassword();
 }

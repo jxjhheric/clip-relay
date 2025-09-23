@@ -9,7 +9,7 @@ A self-hosted cloud clipboard for quickly sharing text snippets, files, and imag
 - Upload text, files, and pasted images with progress feedback
 - Drag-and-drop reordering powered by `@dnd-kit`
 - Full-text search across clipboard content and filenames
-- Optional password gate stored in sessionStorage
+- Lightweight password gate with 2-hour cookie session; manual logout available in settings
 - Responsive UI built from shadcn/ui components and Tailwind CSS 4
 
 [**Screenshots**]
