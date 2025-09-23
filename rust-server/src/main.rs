@@ -192,10 +192,13 @@ async fn auth_verify(State(state): State<AppState>, headers: HeaderMap, Json(bod
     let forwarded = headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok());
     let scheme = forwarded.unwrap_or("http").to_ascii_lowercase();
     let secure = scheme == "https";
+    let samesite_env = env::var("AUTH_COOKIE_SAMESITE").unwrap_or_else(|_| "Lax".to_string());
+    let samesite = match samesite_env.to_ascii_lowercase().as_str() { "none" => "None", "strict" => "Strict", _ => "Lax" };
     let cookie = format!(
-        "auth={}; Max-Age=604800; Path=/; SameSite=Lax; HttpOnly{}",
+        "auth={}; Max-Age=604800; Path=/; SameSite={}; HttpOnly{}",
         expected,
-        if secure { "; Secure" } else { "" }
+        samesite,
+        if secure || samesite == "None" { "; Secure" } else { "" }
     );
     let mut res = Json(serde_json::json!({"success": true})).into_response();
     res.headers_mut().insert("set-cookie", HeaderValue::from_str(&cookie).unwrap());
@@ -244,6 +247,11 @@ async fn auth_mw(State(state): State<AppState>, req: Request, next: axum::middle
         }
     }
     if !ok {
+        // Optional query-based auth: enable by setting ALLOW_QUERY_AUTH=1 (useful for SSE with cross-site cookies blocked)
+        let allow_q = env::var("ALLOW_QUERY_AUTH").ok().map(|v| matches!(v.to_ascii_lowercase().as_str(), "1"|"true"|"yes")).unwrap_or(false);
+        if allow_q { if let Some(q) = req.uri().query() { for (k,v) in form_urlencoded::parse(q.as_bytes()) { if k=="auth" && v==expected { ok = true; break; } } } }
+    }
+    if !ok {
         return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error":"Unauthorized"}))).into_response();
     }
     next.run(req).await
@@ -272,7 +280,9 @@ async fn sse_events(State(state): State<AppState>) -> Sse<impl Stream<Item = Res
     let ping_stream = tokio_stream::wrappers::IntervalStream::new(tokio_time::interval(Duration::from_millis(25_000)))
         .map(|_| Ok::<Event, Infallible>(Event::default().event("ping").data("{}")));
 
-    let s = ready.chain(ping_stream).chain(broadcast_stream);
+    // Merge ping and broadcast so both can be delivered concurrently
+    let merged = stream::select(ping_stream, broadcast_stream);
+    let s = ready.chain(merged);
 
     Sse::new(s).keep_alive(KeepAlive::new().interval(Duration::from_secs(25)).text("keep-alive"))
 }

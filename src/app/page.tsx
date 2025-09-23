@@ -167,7 +167,10 @@ export default function Home() {
     let es: EventSource | null = null;
     try {
       // include credentials so auth cookie works on cross-origin if configured
-      es = new EventSource(`${API_BASE}/api/events`, { withCredentials: true } as any);
+      const useQueryAuth = (process.env.NEXT_PUBLIC_SSE_AUTH_IN_QUERY || '') === '1';
+      const pwd = getStoredPassword();
+      const url = useQueryAuth && pwd ? `${API_BASE}/api/events?auth=${encodeURIComponent(pwd)}` : `${API_BASE}/api/events`;
+      es = new EventSource(url, { withCredentials: true } as any);
       es.addEventListener(CLIPBOARD_CREATED_EVENT, (ev: MessageEvent) => {
         const newItem = JSON.parse((ev as MessageEvent).data) as ClipboardItem;
         if (searchTermRef.current) {
