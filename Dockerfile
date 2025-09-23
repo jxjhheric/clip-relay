@@ -1,13 +1,14 @@
 ##############################
 # Frontend build (Next export)
 ##############################
-FROM node:20-bookworm-slim AS frontend
+FROM node:20-alpine AS frontend
 WORKDIR /app
 
 # Install deps (prod only is fine for export)
 COPY package.json package-lock.json ./
-# Install all deps (including dev) for build-time tools like Tailwind/PostCSS
-RUN npm ci
+# Install build tools for native deps (e.g., sharp), then install deps
+RUN apk add --no-cache python3 make g++ \
+ && npm ci
 
 # Copy sources needed for static export
 COPY next.config.ts ./
@@ -25,12 +26,13 @@ RUN npm run build && rm -rf .next && npm cache clean --force
 ##############################
 # Rust build
 ##############################
-FROM rust:1-bookworm AS rust-builder
+FROM rust:1-alpine AS rust-builder
 WORKDIR /app
 
 # Cache deps first
 COPY rust-server/Cargo.toml rust-server/Cargo.lock ./rust-server/
-RUN mkdir -p rust-server/src && echo "fn main(){}" > rust-server/src/main.rs \
+RUN apk add --no-cache musl-dev build-base pkgconf \
+ && mkdir -p rust-server/src && echo "fn main(){}" > rust-server/src/main.rs \
  && cargo build --manifest-path rust-server/Cargo.toml --release \
  && rm -rf rust-server/target/release/deps/clip_relay*
 
@@ -41,12 +43,13 @@ RUN cargo build --manifest-path rust-server/Cargo.toml --release
 ##############################
 # Runtime image (Debian slim)
 ##############################
-FROM debian:bookworm-slim AS runtime
+FROM alpine:3.20 AS runtime
 WORKDIR /app
 
-RUN useradd -u 10001 -r -s /sbin/nologin appuser \
+RUN addgroup -S app && adduser -S -G app -u 10001 appuser \
+ && apk add --no-cache ca-certificates \
  && mkdir -p /app/data/uploads \
- && chown -R appuser:appuser /app
+ && chown -R appuser:app /app
 
 # Copy static export
 COPY --from=frontend /app/.next-export /app/.next-export
