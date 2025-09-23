@@ -30,6 +30,7 @@ export async function verifyPassword(password: string): Promise<boolean> {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ password }),
+      credentials: 'include',
     });
 
     if (response.ok) {

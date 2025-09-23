@@ -18,6 +18,7 @@ use tokio_util::io::ReaderStream;
 use tokio::io::AsyncWriteExt;
 use axum::body::Body;
 use tower_http::{cors::{Any, CorsLayer}, trace::TraceLayer, services::{ServeDir, ServeFile}};
+use axum::routing::get_service;
 use axum::http::header::{ACCEPT, CONTENT_TYPE, AUTHORIZATION};
 use std::sync::{Arc, Mutex};
 use rusqlite::{Connection, params};
@@ -95,6 +96,12 @@ async fn main() -> anyhow::Result<()> {
     };
     let spa_index = ServeFile::new(static_root.join("index.html"));
     let serve_dir = ServeDir::new(static_root.clone()).not_found_service(spa_index.clone());
+    // Share entry: prefer s/index.html, fallback to s.html (Next export may choose either)
+    let share_entry_path = {
+        let p1 = static_root.join("s").join("index.html");
+        if p1.exists() { p1 } else { static_root.join("s.html") }
+    };
+    let share_index = ServeFile::new(share_entry_path);
 
     let app = Router::new()
         .merge(api)
@@ -121,6 +128,8 @@ async fn main() -> anyhow::Result<()> {
                 .route("/api/share/:token/revoke", post(share_revoke))
                 .layer(from_fn_with_state(state.clone(), auth_mw))
         )
+        .route("/s", get_service(share_index.clone()))
+        .route("/s/", get_service(share_index.clone()))
         .nest_service("/", serve_dir)
         .with_state(state)
         .layer(TraceLayer::new_for_http())
@@ -634,7 +643,7 @@ async fn share_create(State(state): State<AppState>, Json(req): Json<ShareCreate
             params![token, req.item_id, expires_at, req.max_downloads, password_hash, now, now]
         ).unwrap();
     }
-    let url = format!("/s?token={}", token);
+    let url = format!("/s/?token={}", token);
     Json(serde_json::json!({"token": token, "url": url, "expiresAt": expires_at.map(epoch_to_iso), "maxDownloads": req.max_downloads, "requiresPassword": password_hash.is_some()})).into_response()
 }
 

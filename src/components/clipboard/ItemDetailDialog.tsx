@@ -1,5 +1,6 @@
 "use client";
 
+import React, { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -17,6 +18,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { File as FileIcon, FileText, Image as ImageIcon, Copy } from "lucide-react";
 import { formatFileSize } from "@/lib/format";
+import CreateShareDialog from "@/components/clipboard/CreateShareDialog";
 
 type ClipboardItem = {
   id: string;
@@ -40,6 +42,7 @@ export default function ItemDetailDialog({
   onDelete: (id: string) => void;
 }) {
   const { toast } = useToast();
+  const [shareOpen, setShareOpen] = useState(false);
   if (!item) return null;
 
   const copyToClipboard = async (content: string) => {
@@ -197,13 +200,19 @@ export default function ItemDetailDialog({
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
-
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              关闭
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setShareOpen(true)}>
+                分享
+              </Button>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>
+                关闭
+              </Button>
+            </div>
           </div>
         </div>
       </DialogContent>
+      {/* 创建分享链接（详情内快捷入口） */}
+      <CreateShareDialog itemId={item.id} open={shareOpen} onOpenChange={setShareOpen} />
     </Dialog>
   );
 }
