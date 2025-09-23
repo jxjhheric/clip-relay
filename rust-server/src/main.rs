@@ -235,21 +235,21 @@ async fn auth_mw(State(state): State<AppState>, req: Request, next: axum::middle
     let mut ok = false;
     if let Some(auth) = headers.get(axum::http::header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
         if let Some(token) = auth.strip_prefix("Bearer ") {
-            if token == expected { ok = true; }
+            if token == expected.as_str() { ok = true; }
         }
     }
     if !ok {
         if let Some(cookie) = headers.get(axum::http::header::COOKIE).and_then(|v| v.to_str().ok()) {
             for part in cookie.split(';') {
                 let part = part.trim();
-                if let Some(v) = part.strip_prefix("auth=") { if v == expected { ok = true; break; } }
+                if let Some(v) = part.strip_prefix("auth=") { if v == expected.as_str() { ok = true; break; } }
             }
         }
     }
     if !ok {
         // Optional query-based auth: enable by setting ALLOW_QUERY_AUTH=1 (useful for SSE with cross-site cookies blocked)
         let allow_q = env::var("ALLOW_QUERY_AUTH").ok().map(|v| matches!(v.to_ascii_lowercase().as_str(), "1"|"true"|"yes")).unwrap_or(false);
-        if allow_q { if let Some(q) = req.uri().query() { for (k,v) in form_urlencoded::parse(q.as_bytes()) { if k=="auth" && v==expected { ok = true; break; } } } }
+        if allow_q { if let Some(q) = req.uri().query() { for (k,v) in form_urlencoded::parse(q.as_bytes()) { if k=="auth" && v.as_ref()==expected.as_str() { ok = true; break; } } } }
     }
     if !ok {
         return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error":"Unauthorized"}))).into_response();
