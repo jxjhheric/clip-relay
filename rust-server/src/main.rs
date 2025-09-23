@@ -15,6 +15,7 @@ use std::convert::Infallible;
 use serde::{Deserialize, Serialize};
 use tokio::{sync::broadcast, time as tokio_time, net::TcpListener};
 use tokio_util::io::ReaderStream;
+use tokio::io::AsyncWriteExt;
 use axum::body::Body;
 use tower_http::{cors::{Any, CorsLayer}, trace::TraceLayer, services::{ServeDir, ServeFile}};
 use axum::http::header::{ACCEPT, CONTENT_TYPE, AUTHORIZATION};
@@ -430,7 +431,7 @@ fn epoch_to_iso(ts: i64) -> String { OffsetDateTime::from_unix_timestamp(ts).unw
 enum InType { Text, Image, File }
 
 async fn create_clipboard(State(state): State<AppState>, mut multipart: Multipart) -> impl IntoResponse {
-    const MAX_INLINE: usize = 256*1024; const MAX_UPLOAD: usize = 200*1024*1024;
+    const MAX_INLINE: usize = 256*1024;
     let mut content: Option<String> = None; let mut in_type: Option<InType> = None;
     let mut file_name: Option<String> = None; let mut content_type: Option<String> = None; let mut file_size: Option<i64> = None;
     let mut inline_data: Option<Vec<u8>> = None; let mut file_path_rel: Option<String> = None;
@@ -440,10 +441,49 @@ async fn create_clipboard(State(state): State<AppState>, mut multipart: Multipar
             Some("content") => { content = Some(field.text().await.unwrap_or_default()); },
             Some("type") => { let v = field.text().await.unwrap_or_default(); in_type = match v.as_str() { "TEXT"=>Some(InType::Text), "IMAGE"=>Some(InType::Image), "FILE"=>Some(InType::File), _=>None }; },
             Some("file") => {
-                let fname = field.file_name().map(|s| s.to_string()); let ctype = field.content_type().map(|s| s.to_string());
-                let data = field.bytes().await.unwrap_or_default();
-                file_size = Some(data.len() as i64); file_name = fname; content_type = ctype;
-                if data.len() <= MAX_INLINE { inline_data = Some(data.to_vec()); } else if data.len() <= MAX_UPLOAD { let id = Uuid::new_v4().to_string(); let ext = file_name.as_ref().and_then(|n| std::path::Path::new(n).extension().and_then(|s| s.to_str())).unwrap_or(""); let fname = if ext.is_empty() { id.clone() } else { format!("{}.{ext}", id) }; let abs = state.data_dir.join("uploads").join(&fname); stdfs::write(&abs, &data).ok(); file_path_rel = Some(format!("uploads/{}", fname)); } else { return (StatusCode::PAYLOAD_TOO_LARGE, Json(serde_json::json!({"error":"File too large"}))).into_response(); }
+                let fname = field.file_name().map(|s| s.to_string());
+                let ctype = field.content_type().map(|s| s.to_string());
+                file_name = fname;
+                content_type = ctype;
+
+                let mut total: usize = 0;
+                let mut buf: Vec<u8> = Vec::new();
+                let mut fh: Option<tokio::fs::File> = None;
+                let mut rel_path: Option<String> = None;
+
+                let mut field_stream = field;
+                while let Some(chunk) = field_stream.chunk().await.unwrap_or(None) {
+                    total += chunk.len();
+
+                    if fh.is_none() && total <= MAX_INLINE {
+                        buf.extend_from_slice(&chunk);
+                    } else {
+                        if fh.is_none() {
+                            // Switch to file writing: decide filename and open handle
+                            let rand_id = Uuid::new_v4().to_string();
+                            let ext = file_name.as_ref().and_then(|n| std::path::Path::new(n).extension().and_then(|s| s.to_str())).unwrap_or("");
+                            let gen = if ext.is_empty() { rand_id } else { format!("{}.{ext}", rand_id) };
+                            let abs = state.data_dir.join("uploads").join(&gen);
+                            match tokio::fs::File::create(&abs).await {
+                                Ok(mut f) => {
+                                    if !buf.is_empty() {
+                                        if let Err(_e) = f.write_all(&buf).await { return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":"write failed"}))).into_response(); }
+                                    }
+                                    fh = Some(f);
+                                    rel_path = Some(format!("uploads/{}", gen));
+                                }
+                                Err(_e) => { return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":"open failed"}))).into_response(); }
+                            }
+                        }
+                        if let Some(f) = fh.as_mut() {
+                            if let Err(_e) = f.write_all(&chunk).await { return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":"write failed"}))).into_response(); }
+                        }
+                    }
+                }
+
+                file_size = Some(total as i64);
+                if let Some(rp) = rel_path { file_path_rel = Some(rp); inline_data = None; }
+                else { inline_data = Some(buf); }
             },
             _ => {}
         }
@@ -453,7 +493,9 @@ async fn create_clipboard(State(state): State<AppState>, mut multipart: Multipar
     let now = now_unix();
     {
         let conn = state.db.lock().unwrap();
-        conn.execute("INSERT INTO ClipboardItem (id,type,content,fileName,fileSize,sortWeight,contentType,inlineData,filePath,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?, ?, ?, ?, ?)", params![id, t, content, file_name, file_size, 0i64, content_type, inline_data, file_path_rel, now, now]).unwrap();
+        if let Err(e) = conn.execute("INSERT INTO ClipboardItem (id,type,content,fileName,fileSize,sortWeight,contentType,inlineData,filePath,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?, ?, ?, ?, ?)", params![id, t, content, file_name, file_size, 0i64, content_type, inline_data, file_path_rel, now, now]) {
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":"db write failed","detail": e.to_string()}))).into_response();
+        }
     }
     // select minimal fields for broadcast
     let item = serde_json::json!({

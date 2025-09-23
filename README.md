@@ -49,13 +49,13 @@ Create a `.env` file (minimum):
 
 ```
 CLIPBOARD_PASSWORD="change-me"
-# Optional: override default locations/ports
+# Optional: override defaults
 # STATIC_DIR="/app/.next-export"   # where static UI is served from
 # PORT=8087                         # server listen port
 ```
 - `CLIPBOARD_PASSWORD` controls access to the UI.
 - `STATIC_DIR` is optional; by default the server tries `.next-export/`, `out/`, or `../.next-export`.
-- The SQLite database lives under `./data/custom.db` by default (auto-created). No `DATABASE_URL` is required.
+- The SQLite database lives under `./data/custom.db` (auto-created). Ensure the mounted volume is writable by the container user.
 
 ## Docker
 The provided `Dockerfile` builds a slim Rust runtime image including the static Next export. First-time empty volumes are auto-initialized by the server.

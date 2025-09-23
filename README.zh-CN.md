@@ -57,7 +57,7 @@ CLIPBOARD_PASSWORD="change-me"
 ```
 - `CLIPBOARD_PASSWORD` 为访问口令。
 - `STATIC_DIR` 可选；默认会自动探测 `.next-export/`、`out/` 等目录。
-- SQLite 默认位于 `./data/custom.db`（首次启动自动创建），无需设置 `DATABASE_URL`。
+- SQLite 位于 `./data/custom.db`（首次启动自动创建）。请确保挂载卷对容器用户可写。
 
 ### 本地构建镜像
 ```bash
