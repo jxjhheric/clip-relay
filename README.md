@@ -12,9 +12,8 @@ A self-hosted cloud clipboard for quickly sharing text snippets, files, and imag
 - Lightweight password gate with 2-hour cookie session; manual logout available in settings
 - Responsive UI built from shadcn/ui components and Tailwind CSS 4
 
-[**Screenshots**]
-- Home: ![Home](public/screenshots/home.png)
-- Detail dialog: ![Detail](public/screenshots/detail.png)
+## Live Demo
+- Visit: https://clip-frontend.808711.xyz
 
 ## Architecture Overview
 - **Frontend**: Next.js App Router (React 19), exported statically (no SSR) with Tailwind CSS 4 and shadcn/ui (`src/app`, `src/components/ui`).

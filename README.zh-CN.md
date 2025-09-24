@@ -9,9 +9,8 @@ Clip Relay 是一个自托管的剪贴板应用，用于在设备间快速分享
  - 轻量认证：单一访问口令，默认保持登录 2 小时，可在设置中手动退出
 - 响应式 UI：基于 shadcn/ui 与 Tailwind CSS 4
 
-## 界面截图
-- 主页：![Home](public/screenshots/home.png)
-- 详情对话框：![Detail](public/screenshots/detail.png)
+## 在线演示
+- 访问：https://clip-frontend.808711.xyz
 
 ## 架构概览
 - 前端：Next.js App Router（React 19），静态导出（无 SSR），目录 `src/app`, `src/components/ui`
