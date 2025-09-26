@@ -6,7 +6,7 @@ Clip Relay 是一个自托管的剪贴板应用，用于在设备间快速分享
 
 - 实时同步：通过 SSE（Server-Sent Events）广播新建/删除事件
 - 拖拽上传：小文件内联存储，大文件落地到磁盘
- - 轻量认证：单一访问口令，默认保持登录 2 小时，可在设置中手动退出
+ - 轻量认证：单一访问口令，默认保持登录 7 天（可配置），可在设置中手动退出
 - 响应式 UI：基于 shadcn/ui 与 Tailwind CSS 4
 
 ## 在线演示
@@ -53,9 +53,11 @@ CLIPBOARD_PASSWORD="change-me"
 # 可选：覆盖默认设置
 # STATIC_DIR="/app/.next-export"   # 静态前端目录
 # PORT=8087                         # 监听端口
+# AUTH_MAX_AGE_SECONDS=604800       # 认证 Cookie 有效期（秒），默认 7 天
 ```
 - `CLIPBOARD_PASSWORD` 为访问口令。
 - `STATIC_DIR` 可选；默认会自动探测 `.next-export/`、`out/` 等目录。
+- `AUTH_MAX_AGE_SECONDS` 控制登录 Cookie 的有效期（秒）。默认 7 天，设置更短/更长可按需调整。
 - SQLite 位于 `./data/custom.db`（首次启动自动创建）。请确保挂载卷对容器用户可写。
 
 ### 本地构建镜像

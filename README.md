@@ -9,7 +9,7 @@ A self-hosted cloud clipboard for quickly sharing text snippets, files, and imag
 - Upload text, files, and pasted images with progress feedback
 - Drag-and-drop reordering powered by `@dnd-kit`
 - Full-text search across clipboard content and filenames
-- Lightweight password gate with 2-hour cookie session; manual logout available in settings
+- Lightweight password gate with 7-day cookie session (configurable); manual logout available in settings
 - Responsive UI built from shadcn/ui components and Tailwind CSS 4
 
 ## Live Demo
@@ -51,9 +51,11 @@ CLIPBOARD_PASSWORD="change-me"
 # Optional: override defaults
 # STATIC_DIR="/app/.next-export"   # where static UI is served from
 # PORT=8087                         # server listen port
+# AUTH_MAX_AGE_SECONDS=604800       # auth cookie max-age in seconds (default: 7 days)
 ```
 - `CLIPBOARD_PASSWORD` controls access to the UI.
 - `STATIC_DIR` is optional; by default the server tries `.next-export/`, `out/`, or `../.next-export`.
+- `AUTH_MAX_AGE_SECONDS` controls cookie lifetime. Defaults to 7 days; tune longer/shorter as needed.
 - The SQLite database lives under `./data/custom.db` (auto-created). Ensure the mounted volume is writable by the container user.
 
 ## Docker

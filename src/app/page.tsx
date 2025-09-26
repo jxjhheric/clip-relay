@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { FileText, Search, Github, Bug, Menu, LogOut } from 'lucide-react';
 import { 
   AlertDialog,
@@ -24,6 +25,7 @@ import { CLIPBOARD_CREATED_EVENT, CLIPBOARD_DELETED_EVENT, CLIPBOARD_REORDERED_E
 import type { ClipboardItem as GridItem } from '@/components/clipboard/ClipboardGrid';
 
 const ClipboardGrid = dynamic(() => import('@/components/clipboard/ClipboardGrid'), { ssr: false });
+const ClipboardList = dynamic(() => import('@/components/clipboard/ClipboardList'), { ssr: false });
 const AddItemDialog = dynamic(() => import('@/components/clipboard/AddItemDialog'), { ssr: false });
 const ItemDetailDialog = dynamic(() => import('@/components/clipboard/ItemDetailDialog'), { ssr: false });
 const ShareManagerDialog = dynamic(() => import('@/components/clipboard/ShareManagerDialog'), { ssr: false });
@@ -49,6 +51,7 @@ export default function Home() {
   const [shareOpen, setShareOpen] = useState(false);
   const [nextCursor, setNextCursor] = useState<{ id: string; createdAt: string; sortWeight?: number } | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const { toast } = useToast();
 
   // 追踪最新的搜索关键字，供 WebSocket 事件回调使用
@@ -71,6 +74,24 @@ export default function Home() {
       setCheckingAuth(false);
     })();
   }, []);
+
+  // 读取并持久化视图模式
+  useEffect(() => {
+    try {
+      const saved = typeof window !== 'undefined' ? localStorage.getItem('clipboard_view_mode') : null;
+      if (saved === 'grid' || saved === 'list') {
+        setViewMode(saved);
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('clipboard_view_mode', viewMode);
+      }
+    } catch {}
+  }, [viewMode]);
 
   // 预加载详情弹窗组件，避免首次点击时的分包加载延迟
   useEffect(() => {
@@ -369,35 +390,72 @@ export default function Home() {
         </div>
 
         {/* Settings Drawer */}
-        <SettingsDrawer open={settingsOpen} onOpenChange={setSettingsOpen} repoUrl={REPO_URL} issuesUrl={ISSUES_URL} onLogout={() => { setAuthenticated(false); setSelectedItem(null); }} />
-
-        {/* Clipboard Items Grid (dynamic, client-only) */}
-        <ClipboardGrid
-          items={items}
-          onReorder={async (newItems) => {
-            // Optimistic update
-            setItems(newItems);
-            try {
-              const ids = newItems.map(i => i.id);
-              const res = await authFetch('/api/clipboard/reorder', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ids })
-              });
-              if (!res.ok) {
-                throw new Error('reorder failed');
-              }
-            } catch {
-              toast({ title: '排序保存失败', description: '稍后将自动恢复', variant: 'destructive' });
-              // Best-effort refresh to reflect server state
-              fetchItems(searchTermRef.current || '');
-            }
-          }}
-          onSelectItem={(id: string) => handleSelectItem(id)}
-          onCopy={copyToClipboard}
-          onRequestDelete={(id: string) => { setPendingDeleteId(id); setDeleteOpen(true); }}
-          onRequestShare={(id: string) => { setShareItemId(id); setShareOpen(true); }}
+        <SettingsDrawer
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+          repoUrl={REPO_URL}
+          issuesUrl={ISSUES_URL}
+          onLogout={() => { setAuthenticated(false); setSelectedItem(null); }}
+          viewMode={viewMode}
+          onChangeViewMode={setViewMode}
         />
+
+        {/* Clipboard Items (grid or list) */}
+        {viewMode === 'grid' ? (
+          <ClipboardGrid
+            items={items}
+            onReorder={async (newItems) => {
+              // Optimistic update
+              setItems(newItems);
+              try {
+                const ids = newItems.map(i => i.id);
+                const res = await authFetch('/api/clipboard/reorder', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ ids })
+                });
+                if (!res.ok) {
+                  throw new Error('reorder failed');
+                }
+              } catch {
+                toast({ title: '排序保存失败', description: '稍后将自动恢复', variant: 'destructive' });
+                // Best-effort refresh to reflect server state
+                fetchItems(searchTermRef.current || '');
+              }
+            }}
+            onSelectItem={(id: string) => handleSelectItem(id)}
+            onCopy={copyToClipboard}
+            onRequestDelete={(id: string) => { setPendingDeleteId(id); setDeleteOpen(true); }}
+            onRequestShare={(id: string) => { setShareItemId(id); setShareOpen(true); }}
+          />
+        ) : (
+          <ClipboardList
+            items={items}
+            onReorder={async (newItems) => {
+              // Optimistic update
+              setItems(newItems);
+              try {
+                const ids = newItems.map(i => i.id);
+                const res = await authFetch('/api/clipboard/reorder', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ ids })
+                });
+                if (!res.ok) {
+                  throw new Error('reorder failed');
+                }
+              } catch {
+                toast({ title: '排序保存失败', description: '稍后将自动恢复', variant: 'destructive' });
+                // Best-effort refresh to reflect server state
+                fetchItems(searchTermRef.current || '');
+              }
+            }}
+            onSelectItem={(id: string) => handleSelectItem(id)}
+            onCopy={copyToClipboard}
+            onRequestDelete={(id: string) => { setPendingDeleteId(id); setDeleteOpen(true); }}
+            onRequestShare={(id: string) => { setShareItemId(id); setShareOpen(true); }}
+          />
+        )}
 
         {items.length === 0 && (
           <div className="text-center py-12">
@@ -508,12 +566,16 @@ function SettingsDrawer({
   repoUrl,
   issuesUrl,
   onLogout,
+  viewMode,
+  onChangeViewMode,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   repoUrl: string;
   issuesUrl: string;
   onLogout: () => void;
+  viewMode: 'grid' | 'list';
+  onChangeViewMode: (m: 'grid' | 'list') => void;
 }) {
   const { toast } = useToast();
   return (
@@ -533,6 +595,20 @@ function SettingsDrawer({
               <Bug className="h-4 w-4 mr-2" /> 提交问题
             </a>
           </Button>
+          <div className="flex items-center justify-between py-2">
+            <div className="text-sm">视图模式</div>
+            <div>
+              <Select value={viewMode} onValueChange={(v) => onChangeViewMode((v as 'grid' | 'list'))}>
+                <SelectTrigger size="sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="grid">网格</SelectItem>
+                  <SelectItem value="list">列表</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
           <div className="flex items-center justify-between py-2">
             <div className="text-sm">主题</div>
             <ThemeSelect />

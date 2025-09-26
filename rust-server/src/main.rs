@@ -195,10 +195,16 @@ async fn auth_verify(State(state): State<AppState>, headers: HeaderMap, Json(bod
     let secure = scheme == "https";
     let samesite_env = env::var("AUTH_COOKIE_SAMESITE").unwrap_or_else(|_| "Lax".to_string());
     let samesite = match samesite_env.to_ascii_lowercase().as_str() { "none" => "None", "strict" => "Strict", _ => "Lax" };
-    // Cookie 有效期：2 小时（7200 秒）
+    // Cookie 有效期：默认 7 天（可通过 AUTH_MAX_AGE_SECONDS 配置，单位：秒）
+    let max_age: i64 = env::var("AUTH_MAX_AGE_SECONDS")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(604800); // 7 days
     let cookie = format!(
-        "auth={}; Max-Age=7200; Path=/; SameSite={}; HttpOnly{}",
+        "auth={}; Max-Age={}; Path=/; SameSite={}; HttpOnly{}",
         expected,
+        max_age,
         samesite,
         if secure || samesite == "None" { "; Secure" } else { "" }
     );
