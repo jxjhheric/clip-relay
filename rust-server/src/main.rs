@@ -547,12 +547,19 @@ async fn create_clipboard(State(state): State<AppState>, mut multipart: Multipar
     if content.is_none() && inline_data.is_none() && file_path_rel.is_none() { return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"Content or file is required"}))).into_response(); }
     let id = Uuid::new_v4().to_string(); let t = match in_type.unwrap_or(InType::Text) { InType::Text=>"TEXT", InType::Image=>"IMAGE", InType::File=>"FILE" };
     let now = now_unix();
-    {
+    // Assign new items the highest sortWeight so they always appear first
+    let new_weight: i64 = {
         let conn = state.db.lock().unwrap();
-        if let Err(e) = conn.execute("INSERT INTO ClipboardItem (id,type,content,fileName,fileSize,sortWeight,contentType,inlineData,filePath,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?, ?, ?, ?, ?)", params![id, t, content, file_name, file_size, 0i64, content_type, inline_data, file_path_rel, now, now]) {
+        let max: i64 = conn.query_row("SELECT COALESCE(MAX(sortWeight),0) FROM ClipboardItem", [], |r| r.get(0)).unwrap_or(0);
+        let w = max + 1;
+        if let Err(e) = conn.execute(
+            "INSERT INTO ClipboardItem (id,type,content,fileName,fileSize,sortWeight,contentType,inlineData,filePath,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?, ?, ?, ?, ?)",
+            params![id, t, content, file_name, file_size, w, content_type, inline_data, file_path_rel, now, now]
+        ) {
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":"db write failed","detail": e.to_string()}))).into_response();
         }
-    }
+        w
+    };
     // select minimal fields for broadcast
     let item = serde_json::json!({
         "id": id,
@@ -560,7 +567,7 @@ async fn create_clipboard(State(state): State<AppState>, mut multipart: Multipar
         "content": content,
         "fileName": file_name,
         "fileSize": file_size,
-        "sortWeight": 0,
+        "sortWeight": new_weight,
         "createdAt": OffsetDateTime::from_unix_timestamp(now).unwrap().format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
         "updatedAt": OffsetDateTime::from_unix_timestamp(now).unwrap().format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
     });
@@ -582,16 +589,26 @@ struct ReorderReq { ids: Vec<String> }
 
 async fn reorder_clipboard(State(state): State<AppState>, Json(req): Json<ReorderReq>) -> impl IntoResponse {
     if req.ids.is_empty() { return Json(serde_json::json!({"ok": true})); }
+    let now = now_unix();
     let conn = state.db.lock().unwrap();
     let max: i64 = conn.query_row("SELECT COALESCE(MAX(sortWeight),0) FROM ClipboardItem", [], |r| r.get(0)).unwrap_or(0);
     let base = max + (req.ids.len() as i64);
     let tx = conn.unchecked_transaction().unwrap();
+    let mut weights: Vec<(String, i64)> = Vec::with_capacity(req.ids.len());
     for (i, id) in req.ids.iter().enumerate() {
         let new_weight = base - (i as i64);
-        tx.execute("UPDATE ClipboardItem SET sortWeight=?, updatedAt=? WHERE id=?", params![new_weight, now_unix(), id]).ok();
+        tx.execute("UPDATE ClipboardItem SET sortWeight=?, updatedAt=? WHERE id=?", params![new_weight, now, id]).ok();
+        weights.push((id.clone(), new_weight));
     }
     tx.commit().ok();
-    let _ = state.tx.send(ServerEvent { name: "clipboard:reordered".into(), data: serde_json::json!({"ids": req.ids})});
+    // Build weights mapping for SSE so clients can update local state precisely
+    let mut weights_map = serde_json::Map::new();
+    for (id, w) in &weights { weights_map.insert(id.clone(), serde_json::json!(*w)); }
+    let data = serde_json::json!({
+        "ids": req.ids,
+        "weights": serde_json::Value::Object(weights_map),
+    });
+    let _ = state.tx.send(ServerEvent { name: "clipboard:reordered".into(), data });
     Json(serde_json::json!({"ok": true}))
 }
 

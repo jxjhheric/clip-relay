@@ -18,6 +18,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
+import { safeCopyText } from '@/lib/copy';
 import { authFetch, verifyPassword, getStoredPassword, logout } from '@/lib/auth';
 import ThemeSelect from '@/components/ThemeSelect';
 import { Sheet, SheetContent, SheetFooter, SheetHeader } from '@/components/ui/sheet';
@@ -238,17 +239,35 @@ export default function Home() {
         setItems(prev => prev.filter(i => i.id !== id));
       });
       es.addEventListener(CLIPBOARD_REORDERED_EVENT, (ev: MessageEvent) => {
-        const data = JSON.parse((ev as MessageEvent).data) as { ids: string[] };
+        const data = JSON.parse((ev as MessageEvent).data) as { ids: string[]; weights?: Record<string, number> };
         const order = data?.ids || [];
-        if (!order.length) return;
+        const weights = data?.weights || undefined;
+        const hasWeights = !!weights && Object.keys(weights).length > 0;
+        if (!order.length && !hasWeights) return;
         setItems(prev => {
+          let a = [...prev];
+          if (hasWeights) {
+            // Update local sortWeight and resort to match server ordering logic
+            a = a.map(it => (weights && Object.prototype.hasOwnProperty.call(weights, it.id) ? { ...it, sortWeight: weights![it.id] } : it));
+            a.sort((x, y) => {
+              const kx0 = typeof x.sortWeight === 'number' ? x.sortWeight : 0;
+              const ky0 = typeof y.sortWeight === 'number' ? y.sortWeight : 0;
+              if (kx0 !== ky0) return ky0 - kx0; // sortWeight desc
+              const kx1 = new Date(x.createdAt).getTime();
+              const ky1 = new Date(y.createdAt).getTime();
+              if (kx1 !== ky1) return ky1 - kx1; // createdAt desc
+              if (y.id > x.id) return 1; // id desc
+              if (y.id < x.id) return -1;
+              return 0;
+            });
+            return a;
+          }
+          // Fallback for older servers: use provided ids order only
           const idIndex = new Map(order.map((id, idx) => [id, idx] as const));
-          const a = [...prev];
           a.sort((x, y) => {
             const ix = idIndex.has(x.id) ? idIndex.get(x.id)! : Number.POSITIVE_INFINITY;
             const iy = idIndex.has(y.id) ? idIndex.get(y.id)! : Number.POSITIVE_INFINITY;
             if (ix !== iy) return ix - iy; // items in payload first, by given order
-            // fallback: keep existing relative order
             return 0;
           });
           return a;
@@ -259,29 +278,11 @@ export default function Home() {
   }, [authenticated]);
 
   const copyToClipboard = async (content: string) => {
-    try {
-      if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-        await navigator.clipboard.writeText(content);
-      } else {
-        const textarea = document.createElement('textarea');
-        textarea.value = content;
-        textarea.style.position = 'fixed';
-        textarea.style.opacity = '0';
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textarea);
-      }
-      toast({
-        title: "已复制到剪贴板",
-        description: "内容已成功复制到剪贴板",
-      });
-    } catch (err) {
-      toast({
-        title: "复制失败",
-        description: "无法访问剪贴板，请手动复制",
-        variant: "destructive",
-      });
+    const ok = await safeCopyText(content);
+    if (ok) {
+      toast({ title: '已复制到剪贴板', description: '内容已成功复制到剪贴板' });
+    } else {
+      toast({ title: '复制失败', description: '浏览器限制或权限不足，请手动复制', variant: 'destructive' });
     }
   };
 

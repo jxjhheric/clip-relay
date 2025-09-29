@@ -16,6 +16,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
+import { safeCopyText, safeCopyBlob } from "@/lib/copy";
 import { File as FileIcon, FileText, Image as ImageIcon, Copy } from "lucide-react";
 import { formatFileSize } from "@/lib/format";
 import CreateShareDialog from "@/components/clipboard/CreateShareDialog";
@@ -46,22 +47,28 @@ export default function ItemDetailDialog({
   if (!item) return null;
 
   const copyToClipboard = async (content: string) => {
-    try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(content);
-      } else {
-        const textarea = document.createElement("textarea");
-        textarea.value = content;
-        textarea.style.position = "fixed";
-        textarea.style.opacity = "0";
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand("copy");
-        document.body.removeChild(textarea);
-      }
+    const ok = await safeCopyText(content);
+    if (ok) {
       toast({ title: "已复制到剪贴板", description: "内容已成功复制到剪贴板" });
+    } else {
+      toast({ title: "复制失败", description: "浏览器限制或权限不足，请手动复制", variant: "destructive" });
+    }
+  };
+
+  const copyImage = async () => {
+    try {
+      const res = await fetch(`/api/files/${item.id}`);
+      if (!res.ok) throw new Error('fetch failed');
+      const type = res.headers.get('content-type') || 'image/png';
+      const blob = await res.blob();
+      const ok = await safeCopyBlob(blob, type);
+      if (ok) {
+        toast({ title: "已复制图片" });
+      } else {
+        toast({ title: "无法复制图片", description: "浏览器不支持图片复制或权限不足。可长按图片复制，或使用下载按钮。", variant: "destructive" });
+      }
     } catch {
-      toast({ title: "复制失败", description: "无法访问剪贴板，请手动复制", variant: "destructive" });
+      toast({ title: "无法复制图片", description: "请长按图片复制，或使用下载按钮", variant: "destructive" });
     }
   };
 
@@ -130,8 +137,11 @@ export default function ItemDetailDialog({
                 />
               </div>
               <div className="flex gap-2 mt-2">
+                <Button variant="outline" size="sm" onClick={copyImage}>
+                  <Copy className="h-4 w-4 mr-2" /> 复制图片
+                </Button>
                 <Button variant="outline" size="sm" onClick={downloadFile}>
-                  <Copy className="h-4 w-4 mr-2" /> 下载图片
+                  下载图片
                 </Button>
               </div>
             </div>
