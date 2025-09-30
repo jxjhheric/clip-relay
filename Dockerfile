@@ -23,6 +23,11 @@ COPY src ./src
 ENV NODE_ENV=production
 RUN npm run build && rm -rf .next && npm cache clean --force
 
+# Pre-compress static files for faster serving (gzip + brotli)
+RUN apk add --no-cache brotli gzip && \
+    find .next-export -type f \( -name "*.html" -o -name "*.js" -o -name "*.css" -o -name "*.json" -o -name "*.svg" -o -name "*.xml" \) \
+    -exec sh -c 'gzip -9 -k "$1" && brotli -9 -k "$1"' _ {} \;
+
 ##############################
 # Rust build
 ##############################

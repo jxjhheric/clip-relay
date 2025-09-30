@@ -95,14 +95,21 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     };
-    let spa_index = ServeFile::new(static_root.join("index.html"));
-    let serve_dir = ServeDir::new(static_root.clone()).not_found_service(spa_index.clone());
+    let spa_index = ServeFile::new(static_root.join("index.html"))
+        .precompressed_gzip()
+        .precompressed_br();
+    let serve_dir = ServeDir::new(static_root.clone())
+        .precompressed_gzip()
+        .precompressed_br()
+        .not_found_service(spa_index.clone());
     // Share entry: prefer s/index.html, fallback to s.html (Next export may choose either)
     let share_entry_path = {
         let p1 = static_root.join("s").join("index.html");
         if p1.exists() { p1 } else { static_root.join("s.html") }
     };
-    let share_index = ServeFile::new(share_entry_path);
+    let share_index = ServeFile::new(share_entry_path)
+        .precompressed_gzip()
+        .precompressed_br();
 
     let app = Router::new()
         .merge(api)
