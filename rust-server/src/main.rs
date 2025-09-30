@@ -17,8 +17,7 @@ use tokio::{sync::broadcast, time as tokio_time, net::TcpListener};
 use tokio_util::io::ReaderStream;
 use tokio::io::AsyncWriteExt;
 use axum::body::Body;
-use tower_http::{cors::{Any, CorsLayer}, trace::TraceLayer, services::{ServeDir, ServeFile}, compression::CompressionLayer};
-use axum::routing::get_service;
+use tower_http::{cors::{Any, CorsLayer}, trace::TraceLayer};
 use axum::http::header::{ACCEPT, CONTENT_TYPE, AUTHORIZATION};
 use std::sync::{Arc, Mutex};
 use rusqlite::{Connection, params};
@@ -26,7 +25,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 use std::fs as stdfs;
 use std::path::{Path as StdPath, PathBuf};
-// use mime_guess::from_path as guess_mime;
+use mime_guess::from_path as guess_mime;
 use sha2::{Digest, Sha256};
 use rand::RngCore;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64_URL_SAFE_NO_PAD;
@@ -95,14 +94,14 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     };
-    let spa_index = ServeFile::new(static_root.join("index.html"));
-    let serve_dir = ServeDir::new(static_root.clone()).not_found_service(spa_index.clone());
+    // We'll handle static files ourselves to support precompressed .br
+    let spa_index_path = static_root.join("index.html");
     // Share entry: prefer s/index.html, fallback to s.html (Next export may choose either)
     let share_entry_path = {
         let p1 = static_root.join("s").join("index.html");
         if p1.exists() { p1 } else { static_root.join("s.html") }
     };
-    let share_index = ServeFile::new(share_entry_path);
+    let share_index_path = share_entry_path.clone();
 
     let app = Router::new()
         .merge(api)
@@ -129,11 +128,32 @@ async fn main() -> anyhow::Result<()> {
                 .route("/api/share/:token/revoke", post(share_revoke))
                 .layer(from_fn_with_state(state.clone(), auth_mw))
         )
-        .route("/s", get_service(share_index.clone()))
-        .route("/s/", get_service(share_index.clone()))
-        .nest_service("/", serve_dir)
+        // Prefer precompressed .br for share entry as well
+        .route("/s", get({
+            let p = share_index_path.clone();
+            move |headers: HeaderMap| {
+                let p2 = p.clone();
+                async move { serve_file_prefer_br(p2, headers).await }
+            }
+        }))
+        .route("/s/", get({
+            let p = share_index_path.clone();
+            move |headers: HeaderMap| {
+                let p2 = p.clone();
+                async move { serve_file_prefer_br(p2, headers).await }
+            }
+        }))
+        // Static files with SPA fallback, prefer .br if available
+        .route("/*path", get({
+            let root = static_root.clone();
+            let idx = spa_index_path.clone();
+            move |Path(path): Path<String>, headers: HeaderMap| {
+                let root2 = root.clone();
+                let idx2 = idx.clone();
+                async move { static_handler(root2, idx2, path, headers).await }
+            }
+        }))
         .with_state(state)
-        .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
         .layer(build_cors());
 
@@ -177,6 +197,98 @@ fn build_cors() -> CorsLayer {
 
 async fn health() -> impl IntoResponse {
     Json(serde_json::json!({ "message": "Good!" }))
+}
+
+fn accept_br(headers: &HeaderMap) -> bool {
+    headers
+        .get(axum::http::header::ACCEPT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(',').any(|e| e.trim().starts_with("br")))
+        .unwrap_or(false)
+}
+
+fn sanitize_path(input: &str) -> PathBuf {
+    use std::path::Component;
+    let mut p = PathBuf::new();
+    for c in std::path::Path::new(input).components() {
+        match c {
+            Component::Normal(seg) => p.push(seg),
+            _ => {}
+        }
+    }
+    p
+}
+
+async fn serve_file_prefer_br(file_path: PathBuf, headers: HeaderMap) -> Response {
+    let wants_br = accept_br(&headers);
+    let orig_ct = guess_mime(&file_path).first_or_octet_stream().to_string();
+    let mut chosen = file_path.clone();
+    let mut ce: Option<&'static str> = None;
+    if wants_br {
+        let fname = chosen.file_name().and_then(|s| s.to_str()).unwrap_or("index.html");
+        let mut br_name = fname.to_string(); br_name.push_str(".br");
+        let br_path = chosen.with_file_name(br_name);
+        if tokio::fs::metadata(&br_path).await.ok().map(|m| m.is_file()).unwrap_or(false) {
+            chosen = br_path;
+            ce = Some("br");
+        }
+    }
+    match tokio::fs::File::open(&chosen).await {
+        Ok(f) => {
+            let len = tokio::fs::metadata(&chosen).await.ok().map(|m| m.len());
+            let mut hm = axum::http::HeaderMap::new();
+            hm.insert(axum::http::header::CONTENT_TYPE, HeaderValue::from_str(&orig_ct).unwrap());
+            if let Some(v) = ce { hm.insert(axum::http::header::CONTENT_ENCODING, HeaderValue::from_static(v)); hm.insert(axum::http::header::VARY, HeaderValue::from_static("Accept-Encoding")); }
+            if let Some(l) = len { hm.insert(axum::http::header::CONTENT_LENGTH, HeaderValue::from_str(&l.to_string()).unwrap()); }
+            let body = Body::from_stream(ReaderStream::new(f));
+            (StatusCode::OK, hm, body).into_response()
+        }
+        Err(_) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error":"not found"}))).into_response()
+    }
+}
+
+async fn static_handler(static_root: PathBuf, spa_index: PathBuf, req_path: String, headers: HeaderMap) -> Response {
+    let wants_br = accept_br(&headers);
+    let mut rel = sanitize_path(&req_path);
+    let mut target = static_root.join(&rel);
+    // If directory or empty => index.html
+    let meta = tokio::fs::metadata(&target).await.ok();
+    let target_is_file = meta.as_ref().map(|m| m.is_file()).unwrap_or(false);
+    let target_is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+    if rel.as_os_str().is_empty() || target_is_dir {
+        target = static_root.join("index.html");
+    } else if !target_is_file {
+        // not found -> SPA index
+        target = spa_index.clone();
+    }
+
+    // Prefer .br if available
+    let orig_ct = guess_mime(&target).first_or_octet_stream().to_string();
+    let mut chosen = target.clone();
+    let mut ce: Option<&'static str> = None;
+    if wants_br {
+        if let Some(fname) = chosen.file_name().and_then(|s| s.to_str()) {
+            let mut br_name = fname.to_string(); br_name.push_str(".br");
+            let br_path = chosen.with_file_name(br_name);
+            if tokio::fs::metadata(&br_path).await.ok().map(|m| m.is_file()).unwrap_or(false) {
+                chosen = br_path;
+                ce = Some("br");
+            }
+        }
+    }
+
+    match tokio::fs::File::open(&chosen).await {
+        Ok(f) => {
+            let len = tokio::fs::metadata(&chosen).await.ok().map(|m| m.len());
+            let mut hm = axum::http::HeaderMap::new();
+            hm.insert(axum::http::header::CONTENT_TYPE, HeaderValue::from_str(&orig_ct).unwrap());
+            if let Some(v) = ce { hm.insert(axum::http::header::CONTENT_ENCODING, HeaderValue::from_static(v)); hm.insert(axum::http::header::VARY, HeaderValue::from_static("Accept-Encoding")); }
+            if let Some(l) = len { hm.insert(axum::http::header::CONTENT_LENGTH, HeaderValue::from_str(&l.to_string()).unwrap()); }
+            let body = Body::from_stream(ReaderStream::new(f));
+            (StatusCode::OK, hm, body).into_response()
+        }
+        Err(_) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error":"not found"}))).into_response()
+    }
 }
 
 #[derive(Deserialize)]

@@ -23,6 +23,10 @@ COPY src ./src
 ENV NODE_ENV=production
 RUN npm run build && rm -rf .next && npm cache clean --force
 
+# Precompress static assets (brotli only)
+COPY scripts ./scripts
+RUN node ./scripts/precompress.mjs /app/.next-export --write-br --no-gz
+
 ##############################
 # Rust build
 ##############################
