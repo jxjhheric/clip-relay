@@ -45,7 +45,7 @@ COPY rust-server ./rust-server
 RUN cargo build --manifest-path rust-server/Cargo.toml --release
 
 ##############################
-# Runtime image (Debian slim)
+# Runtime image (Alpine + Rust server only)
 ##############################
 FROM alpine:3.20 AS runtime
 WORKDIR /app

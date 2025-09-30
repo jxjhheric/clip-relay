@@ -30,6 +30,7 @@ use sha2::{Digest, Sha256};
 use rand::RngCore;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64_URL_SAFE_NO_PAD;
 use base64::Engine as _;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone)]
 struct AppState {
@@ -243,11 +244,30 @@ async fn serve_file_prefer_br(file_path: PathBuf, headers: HeaderMap) -> Respons
     }
     match tokio::fs::File::open(&chosen).await {
         Ok(f) => {
-            let len = tokio::fs::metadata(&chosen).await.ok().map(|m| m.len());
+            // metadata for caching
+            let meta = tokio::fs::metadata(&chosen).await.ok();
+            let len = meta.as_ref().map(|m| m.len());
+            let etag = meta.as_ref().and_then(make_weak_etag);
+            let is_html = orig_ct.starts_with("text/html");
+
+            // Handle conditional request via If-None-Match
+            if let (Some(tag), Some(inm)) = (etag.as_ref(), headers.get(axum::http::header::IF_NONE_MATCH)) {
+                if inm.to_str().ok().map(|s| s.split(',').any(|v| v.trim() == tag)).unwrap_or(false) {
+                    let mut hm = axum::http::HeaderMap::new();
+                    cache_headers_for_path(&mut hm, None, is_html);
+                    if let Some(v) = ce { hm.insert(axum::http::header::VARY, HeaderValue::from_static("Accept-Encoding")); hm.insert(axum::http::header::CONTENT_ENCODING, HeaderValue::from_static(v)); }
+                    hm.insert(axum::http::header::ETAG, HeaderValue::from_str(tag).unwrap());
+                    return (StatusCode::NOT_MODIFIED, hm).into_response();
+                }
+            }
+
             let mut hm = axum::http::HeaderMap::new();
             hm.insert(axum::http::header::CONTENT_TYPE, HeaderValue::from_str(&orig_ct).unwrap());
             if let Some(v) = ce { hm.insert(axum::http::header::CONTENT_ENCODING, HeaderValue::from_static(v)); hm.insert(axum::http::header::VARY, HeaderValue::from_static("Accept-Encoding")); }
             if let Some(l) = len { hm.insert(axum::http::header::CONTENT_LENGTH, HeaderValue::from_str(&l.to_string()).unwrap()); }
+            if let Some(tag) = etag { hm.insert(axum::http::header::ETAG, HeaderValue::from_str(&tag).unwrap()); }
+            cache_headers_for_path(&mut hm, None, is_html);
+
             let body = Body::from_stream(ReaderStream::new(f));
             (StatusCode::OK, hm, body).into_response()
         }
@@ -287,15 +307,66 @@ async fn static_handler(static_root: PathBuf, spa_index: PathBuf, req_path: Stri
 
     match tokio::fs::File::open(&chosen).await {
         Ok(f) => {
-            let len = tokio::fs::metadata(&chosen).await.ok().map(|m| m.len());
+            // metadata for caching
+            let meta = tokio::fs::metadata(&chosen).await.ok();
+            let len = meta.as_ref().map(|m| m.len());
+            let etag = meta.as_ref().and_then(make_weak_etag);
+            let is_html = orig_ct.starts_with("text/html");
+
+            // conditional ETag check
+            if let (Some(tag), Some(inm)) = (etag.as_ref(), headers.get(axum::http::header::IF_NONE_MATCH)) {
+                if inm.to_str().ok().map(|s| s.split(',').any(|v| v.trim() == tag)).unwrap_or(false) {
+                    let mut hm = axum::http::HeaderMap::new();
+                    cache_headers_for_path(&mut hm, Some(&req_path), is_html);
+                    if let Some(v) = ce { hm.insert(axum::http::header::VARY, HeaderValue::from_static("Accept-Encoding")); hm.insert(axum::http::header::CONTENT_ENCODING, HeaderValue::from_static(v)); }
+                    hm.insert(axum::http::header::ETAG, HeaderValue::from_str(tag).unwrap());
+                    return (StatusCode::NOT_MODIFIED, hm).into_response();
+                }
+            }
+
             let mut hm = axum::http::HeaderMap::new();
             hm.insert(axum::http::header::CONTENT_TYPE, HeaderValue::from_str(&orig_ct).unwrap());
             if let Some(v) = ce { hm.insert(axum::http::header::CONTENT_ENCODING, HeaderValue::from_static(v)); hm.insert(axum::http::header::VARY, HeaderValue::from_static("Accept-Encoding")); }
             if let Some(l) = len { hm.insert(axum::http::header::CONTENT_LENGTH, HeaderValue::from_str(&l.to_string()).unwrap()); }
+            if let Some(tag) = etag { hm.insert(axum::http::header::ETAG, HeaderValue::from_str(&tag).unwrap()); }
+            cache_headers_for_path(&mut hm, Some(&req_path), is_html);
+
             let body = Body::from_stream(ReaderStream::new(f));
             (StatusCode::OK, hm, body).into_response()
         }
         Err(_) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error":"not found"}))).into_response()
+    }
+}
+
+fn make_weak_etag(meta: &std::fs::Metadata) -> Option<String> {
+    let len = meta.len();
+    let mtime = meta.modified().ok()?;
+    let secs = mtime.duration_since(UNIX_EPOCH).ok()?.as_secs();
+    Some(format!("W/\"{}-{}\"", len, secs))
+}
+
+fn cache_headers_for_path(hm: &mut axum::http::HeaderMap, req_path: Option<&str>, is_html: bool) {
+    let mut immutable = false;
+    if let Some(p) = req_path {
+        if p.starts_with("/_next/static/")
+            || p.ends_with(".js") || p.ends_with(".css") || p.ends_with(".map")
+            || p.ends_with(".json") || p.ends_with(".svg") || p.ends_with(".woff2")
+            || p.ends_with(".png") || p.ends_with(".jpg") || p.ends_with(".jpeg") || p.ends_with(".gif")
+        {
+            immutable = true;
+        }
+    } else if !is_html {
+        // For non-HTML when path unknown (e.g., "/"), prefer short cache, avoid over-caching
+        hm.insert(axum::http::header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=300"));
+        return;
+    }
+
+    if is_html {
+        hm.insert(axum::http::header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    } else if immutable {
+        hm.insert(axum::http::header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=31536000, immutable"));
+    } else {
+        hm.insert(axum::http::header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=3600"));
     }
 }
 
