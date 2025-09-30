@@ -257,7 +257,7 @@ async fn serve_file_prefer_br(file_path: PathBuf, headers: HeaderMap) -> Respons
 
 async fn static_handler(static_root: PathBuf, spa_index: PathBuf, req_path: String, headers: HeaderMap) -> Response {
     let wants_br = accept_br(&headers);
-    let mut rel = sanitize_path(&req_path);
+    let rel = sanitize_path(&req_path);
     let mut target = static_root.join(&rel);
     // If directory or empty => index.html
     let meta = tokio::fs::metadata(&target).await.ok();
