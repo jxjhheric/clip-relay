@@ -143,6 +143,14 @@ async fn main() -> anyhow::Result<()> {
                 async move { serve_file_prefer_br(p2, headers).await }
             }
         }))
+        // Root path
+        .route("/", get({
+            let idx = spa_index_path.clone();
+            move |headers: HeaderMap| {
+                let idx2 = idx.clone();
+                async move { serve_file_prefer_br(idx2, headers).await }
+            }
+        }))
         // Static files with SPA fallback, prefer .br if available
         .route("/*path", get({
             let root = static_root.clone();

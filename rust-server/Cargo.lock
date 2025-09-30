@@ -232,6 +232,7 @@ dependencies = [
  "dotenvy",
  "form_urlencoded",
  "futures-util",
+ "mime_guess",
  "rand",
  "rusqlite",
  "serde",
