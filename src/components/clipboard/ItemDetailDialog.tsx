@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -44,7 +44,28 @@ export default function ItemDetailDialog({
 }) {
   const { toast } = useToast();
   const [shareOpen, setShareOpen] = useState(false);
+  const [imgBlob, setImgBlob] = useState<Blob | null>(null);
+  const [imgMime, setImgMime] = useState<string | null>(null);
   if (!item) return null;
+
+  // Prefetch image blob when dialog opens to speed up copy
+  useEffect(() => {
+    let aborted = false;
+    setImgBlob(null);
+    setImgMime(null);
+    if (open && item?.type === 'IMAGE') {
+      (async () => {
+        try {
+          const res = await fetch(`/api/files/${item.id}`, { cache: 'force-cache' });
+          if (!res.ok) return;
+          const type = res.headers.get('content-type') || 'image/png';
+          const blob = await res.blob();
+          if (!aborted) { setImgMime(type); setImgBlob(blob); }
+        } catch {}
+      })();
+    }
+    return () => { aborted = true; };
+  }, [open, item?.id, item?.type]);
 
   const copyToClipboard = async (content: string) => {
     const ok = await safeCopyText(content);
@@ -57,11 +78,14 @@ export default function ItemDetailDialog({
 
   const copyImage = async () => {
     try {
-      const res = await fetch(`/api/files/${item.id}`);
-      if (!res.ok) throw new Error('fetch failed');
-      const type = res.headers.get('content-type') || 'image/png';
-      const blob = await res.blob();
-      const ok = await safeCopyBlob(blob, type);
+      let blob = imgBlob; let type = imgMime || undefined;
+      if (!blob) {
+        const res = await fetch(`/api/files/${item.id}`, { cache: 'force-cache' });
+        if (!res.ok) throw new Error('fetch failed');
+        type = res.headers.get('content-type') || 'image/png';
+        blob = await res.blob();
+      }
+      const ok = blob ? await safeCopyBlob(blob, type) : false;
       if (ok) {
         toast({ title: "已复制图片" });
       } else {

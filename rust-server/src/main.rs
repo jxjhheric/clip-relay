@@ -642,6 +642,8 @@ async fn get_file(State(state): State<AppState>, Path(id): Path<String>, uri: Ur
     headers.insert(axum::http::header::CONTENT_TYPE, HeaderValue::from_str(&ctype).unwrap());
     let disp = format!("{}; filename*=UTF-8''{}", if want_download {"attachment"} else {"inline"}, urlencoding::encode(&filename));
     headers.insert(axum::http::header::CONTENT_DISPOSITION, HeaderValue::from_str(&disp).unwrap());
+    // Strong caching: file content is immutable by id; allow long-lived cache to speed up subsequent fetches
+    headers.insert(axum::http::header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=31536000, immutable"));
     if let Some(rel) = file_path {
         let abs = state.data_dir.join(rel);
         if let Ok(meta) = tokio::fs::metadata(&abs).await { headers.insert(axum::http::header::CONTENT_LENGTH, HeaderValue::from_str(&meta.len().to_string()).unwrap()); }
