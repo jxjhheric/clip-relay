@@ -46,7 +46,6 @@ export default function ItemDetailDialog({
   const [shareOpen, setShareOpen] = useState(false);
   const [imgBlob, setImgBlob] = useState<Blob | null>(null);
   const [imgMime, setImgMime] = useState<string | null>(null);
-  if (!item) return null;
 
   // Prefetch image blob when dialog opens to speed up copy
   useEffect(() => {
@@ -66,6 +65,8 @@ export default function ItemDetailDialog({
     }
     return () => { aborted = true; };
   }, [open, item?.id, item?.type]);
+
+  if (!item) return null;
 
   const copyToClipboard = async (content: string) => {
     const ok = await safeCopyText(content);
