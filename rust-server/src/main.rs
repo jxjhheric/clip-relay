@@ -17,7 +17,7 @@ use tokio::{sync::broadcast, time as tokio_time, net::TcpListener};
 use tokio_util::io::ReaderStream;
 use tokio::io::AsyncWriteExt;
 use axum::body::Body;
-use tower_http::{cors::{Any, CorsLayer}, trace::TraceLayer, services::{ServeDir, ServeFile}};
+use tower_http::{cors::{Any, CorsLayer}, trace::TraceLayer, services::{ServeDir, ServeFile}, compression::CompressionLayer};
 use axum::routing::get_service;
 use axum::http::header::{ACCEPT, CONTENT_TYPE, AUTHORIZATION};
 use std::sync::{Arc, Mutex};
@@ -95,21 +95,14 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     };
-    let spa_index = ServeFile::new(static_root.join("index.html"))
-        .precompressed_gzip()
-        .precompressed_br();
-    let serve_dir = ServeDir::new(static_root.clone())
-        .precompressed_gzip()
-        .precompressed_br()
-        .not_found_service(spa_index.clone());
+    let spa_index = ServeFile::new(static_root.join("index.html"));
+    let serve_dir = ServeDir::new(static_root.clone()).not_found_service(spa_index.clone());
     // Share entry: prefer s/index.html, fallback to s.html (Next export may choose either)
     let share_entry_path = {
         let p1 = static_root.join("s").join("index.html");
         if p1.exists() { p1 } else { static_root.join("s.html") }
     };
-    let share_index = ServeFile::new(share_entry_path)
-        .precompressed_gzip()
-        .precompressed_br();
+    let share_index = ServeFile::new(share_entry_path);
 
     let app = Router::new()
         .merge(api)
@@ -140,6 +133,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/s/", get_service(share_index.clone()))
         .nest_service("/", serve_dir)
         .with_state(state)
+        .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
         .layer(build_cors());
 
