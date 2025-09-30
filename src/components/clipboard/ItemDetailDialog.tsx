@@ -152,12 +152,12 @@ export default function ItemDetailDialog({
           {item.type === "IMAGE" && (
             <div>
               <h3 className="text-sm font-medium mb-2">图片预览</h3>
-              <div className="bg-muted p-4 rounded-lg flex justify-center">
+              <div className="bg-muted p-4 rounded-lg flex justify-center min-h-[24rem]">
                 <img
                   src={`/api/files/${item.id}`}
                   alt={item.fileName || "图片"}
                   className="max-w-full max-h-96 object-contain rounded"
-                  loading="lazy"
+                  loading="eager"
                   decoding="async"
                 />
               </div>
