@@ -68,3 +68,7 @@ dist/
 
 # rust local data (db, uploads)
 /rust-server/data/
+
+# Windows special device files
+nul
+NUL

@@ -94,10 +94,8 @@ export default function Home() {
     } catch {}
   }, [viewMode]);
 
-  // 预加载详情弹窗组件，避免首次点击时的分包加载延迟
-  useEffect(() => {
-    import('@/components/clipboard/ItemDetailDialog').catch(() => {});
-  }, []);
+  // 数据加载完成状态
+  const [dataLoaded, setDataLoaded] = useState(false);
 
   // 获取剪贴板条目数据
   const fetchItems = async (searchTerm = '') => {
@@ -193,13 +191,13 @@ export default function Home() {
 
   useEffect(() => {
     if (authenticated) {
-      fetchItems(); // 初始加载
+      fetchItems().finally(() => setDataLoaded(true)); // 初始加载
     }
   }, [authenticated]);
 
-  // SSE 实时同步：监听创建与删除事件
+  // SSE 实时同步：在数据加载完成后再建立连接
   useEffect(() => {
-    if (!authenticated) return;
+    if (!authenticated || !dataLoaded) return;
     let es: EventSource | null = null;
     try {
       // include credentials so auth cookie works on cross-origin if configured
@@ -275,7 +273,7 @@ export default function Home() {
       });
     } catch {}
     return () => { try { es?.close(); } catch {} };
-  }, [authenticated]);
+  }, [authenticated, dataLoaded]);
 
   const copyToClipboard = async (content: string) => {
     const ok = await safeCopyText(content);

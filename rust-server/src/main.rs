@@ -30,7 +30,7 @@ use sha2::{Digest, Sha256};
 use rand::RngCore;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64_URL_SAFE_NO_PAD;
 use base64::Engine as _;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 #[derive(Clone)]
 struct AppState {
