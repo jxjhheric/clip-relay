@@ -69,6 +69,7 @@ async fn main() -> anyhow::Result<()> {
         // Clipboard core
         .route("/clipboard", get(list_clipboard).post(create_clipboard))
         .route("/clipboard/:id", get(get_clipboard).delete(delete_clipboard))
+        .route("/clipboard/:id/share", get(get_item_share).put(update_item_share))
         .route("/clipboard/reorder", post(reorder_clipboard))
         // Files
         .route("/files/:id", get(get_file))
@@ -109,6 +110,7 @@ async fn main() -> anyhow::Result<()> {
         // Public share endpoints (no global auth) - use closures to avoid Handler type inference pitfalls
         .route("/api/share/:token", get(share_meta))
         .route("/api/share/:token/verify", post(share_verify))
+        .route("/api/share/:token/qr", get(share_qr))
         .route(
             "/api/share/:token/file",
             get(|State(state): State<AppState>, Path(token): Path<String>, headers: HeaderMap| async move {
@@ -121,14 +123,7 @@ async fn main() -> anyhow::Result<()> {
                 share_download_inner(state, token, headers).await
             }),
         )
-        // Protected share management
-        .merge(
-            Router::new()
-                .route("/api/share", get(share_list).post(share_create))
-                .route("/api/share/:token", axum::routing::delete(share_delete))
-                .route("/api/share/:token/revoke", post(share_revoke))
-                .layer(from_fn_with_state(state.clone(), auth_mw))
-        )
+        // Legacy POST /api/share removed; item share managed via /api/clipboard/:id/share
         // Prefer precompressed .br for share entry as well
         .route("/s", get({
             let p = share_index_path.clone();
@@ -683,6 +678,10 @@ async fn create_clipboard(State(state): State<AppState>, mut multipart: Multipar
     let mut content: Option<String> = None; let mut in_type: Option<InType> = None;
     let mut file_name: Option<String> = None; let mut content_type: Option<String> = None; let mut file_size: Option<i64> = None;
     let mut inline_data: Option<Vec<u8>> = None; let mut file_path_rel: Option<String> = None;
+    // share params (unified flow: every item is a share)
+    let mut share_expires_in: Option<i64> = None; // seconds; None => default never expire
+    let mut share_max_downloads: Option<i64> = None;
+    let mut share_password: Option<String> = None;
     while let Some(field) = multipart.next_field().await.unwrap_or(None) {
         let name = field.name().map(|s| s.to_string());
         match name.as_deref() {
@@ -733,6 +732,19 @@ async fn create_clipboard(State(state): State<AppState>, mut multipart: Multipar
                 if let Some(rp) = rel_path { file_path_rel = Some(rp); inline_data = None; }
                 else { inline_data = Some(buf); }
             },
+            Some("shareExpiresIn") => {
+                // 0 or absent => never expire
+                let v = field.text().await.unwrap_or_default();
+                if let Ok(n) = v.parse::<i64>() { share_expires_in = Some(n.max(0)); }
+            },
+            Some("shareMaxDownloads") => {
+                let v = field.text().await.unwrap_or_default();
+                if let Ok(n) = v.parse::<i64>() { share_max_downloads = Some(n); }
+            },
+            Some("sharePassword") => {
+                let v = field.text().await.unwrap_or_default();
+                if !v.trim().is_empty() { share_password = Some(v); }
+            },
             _ => {}
         }
     }
@@ -752,7 +764,7 @@ async fn create_clipboard(State(state): State<AppState>, mut multipart: Multipar
         }
         w
     };
-    // select minimal fields for broadcast
+    // select minimal fields for broadcast/response
     let item = serde_json::json!({
         "id": id,
         "type": t,
@@ -764,7 +776,42 @@ async fn create_clipboard(State(state): State<AppState>, mut multipart: Multipar
         "updatedAt": OffsetDateTime::from_unix_timestamp(now).unwrap().format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
     });
     let _ = state.tx.send(ServerEvent { name: "clipboard:created".into(), data: item.clone() });
-    (StatusCode::CREATED, Json(item)).into_response()
+    // Auto-create share for this item (never expire by default, unless provided)
+    let (token, expires_at_abs, requires_password) = {
+        // token 18 random bytes -> base64url no pad
+        let mut buf = [0u8; 18]; rand::thread_rng().fill_bytes(&mut buf);
+        let token = B64_URL_SAFE_NO_PAD.encode(buf);
+        let expires_at_abs = match share_expires_in {
+            Some(sec) if sec > 0 => Some(now + sec),
+            _ => None,
+        };
+        // password hash
+        let password_hash: Option<String> = share_password.as_ref().and_then(|p| if p.trim().is_empty() { None } else {
+            let mut hasher = Sha256::new(); hasher.update(p.as_bytes()); hasher.update(b"|"); hasher.update(token.as_bytes());
+            Some(format!("{:x}", hasher.finalize()))
+        });
+        {
+            let conn = state.db.lock().unwrap();
+            let _ = conn.execute(
+                "INSERT INTO ShareLink (token,itemId,expiresAt,maxDownloads,downloadCount,revoked,passwordHash,createdAt,updatedAt) VALUES (?,?,?,?,0,0,?,?,?)",
+                params![token, id, expires_at_abs, share_max_downloads, password_hash, now, now]
+            );
+        }
+        (token, expires_at_abs, share_password.is_some())
+    };
+
+    // Build response: include share info
+    let mut resp_obj = item.as_object().cloned().unwrap_or_default();
+    let share_url = format!("/s/?token={}", token);
+    resp_obj.insert("share".to_string(), serde_json::json!({
+        "token": token,
+        "url": share_url,
+        "expiresAt": expires_at_abs.map(epoch_to_iso),
+        "maxDownloads": share_max_downloads,
+        "requiresPassword": requires_password,
+        "downloadCount": 0
+    }));
+    (StatusCode::CREATED, Json(serde_json::Value::Object(resp_obj))).into_response()
 }
 
 async fn get_clipboard(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
@@ -856,117 +903,7 @@ async fn get_file(State(state): State<AppState>, Path(id): Path<String>, uri: Ur
 
 // -------------------- Share Handlers --------------------
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ShareCreateReq {
-    item_id: String,
-    expires_in: Option<i64>,
-    expires_at: Option<String>,
-    max_downloads: Option<i64>,
-    password: Option<String>,
-}
-
-async fn share_create(State(state): State<AppState>, Json(req): Json<ShareCreateReq>) -> impl IntoResponse {
-    if req.item_id.is_empty() { return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"itemId is required"}))).into_response(); }
-    // ensure item exists
-    {
-        let conn = state.db.lock().unwrap();
-        let mut st = conn.prepare("SELECT 1 FROM ClipboardItem WHERE id=? LIMIT 1").unwrap();
-        let exists = st.exists([req.item_id.clone()]).unwrap_or(false);
-        if !exists { return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error":"Item not found"}))).into_response(); }
-    }
-
-    // compute expiresAt (unix seconds)
-    let mut expires_at: Option<i64> = None;
-    if let Some(s) = req.expires_at.as_ref() { if let Ok(dt) = time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339) { expires_at = Some(dt.unix_timestamp()); }}
-    if expires_at.is_none() {
-        if let Some(sec) = req.expires_in { if sec > 0 { expires_at = Some(now_unix() + sec); } }
-    }
-
-    // token: 18 random bytes -> base64url no pad
-    let mut buf = [0u8; 18]; rand::thread_rng().fill_bytes(&mut buf);
-    let token = B64_URL_SAFE_NO_PAD.encode(buf);
-
-    // password hash
-    let password_hash: Option<String> = req.password.as_ref().and_then(|p| if p.trim().is_empty() { None } else {
-        let mut hasher = Sha256::new(); hasher.update(p.as_bytes()); hasher.update(b"|"); hasher.update(token.as_bytes());
-        Some(format!("{:x}", hasher.finalize()))
-    });
-
-    let now = now_unix();
-    {
-        let conn = state.db.lock().unwrap();
-        conn.execute(
-            "INSERT INTO ShareLink (token,itemId,expiresAt,maxDownloads,downloadCount,revoked,passwordHash,createdAt,updatedAt) VALUES (?,?,?,?,0,0,?,?,?)",
-            params![token, req.item_id, expires_at, req.max_downloads, password_hash, now, now]
-        ).unwrap();
-    }
-    let url = format!("/s/?token={}", token);
-    Json(serde_json::json!({"token": token, "url": url, "expiresAt": expires_at.map(epoch_to_iso), "maxDownloads": req.max_downloads, "requiresPassword": password_hash.is_some()})).into_response()
-}
-
-// removed unused ShareListQuery struct (manual query parsing implemented)
-
-async fn share_list(State(state): State<AppState>, uri: Uri) -> impl IntoResponse {
-    let q = uri.query().unwrap_or("");
-    let params: Vec<(String, String)> = form_urlencoded::parse(q.as_bytes()).into_owned().collect();
-    let mut item_id: Option<String> = None; let mut include_revoked=false; let mut include_invalid=false; let mut page: usize=1; let mut page_size: usize=20;
-    for (k,v) in params { match k.as_str(){
-        "itemId"=> item_id=Some(v),
-        "includeRevoked"=> include_revoked = matches!(v.to_lowercase().as_str(),"1"|"true"|"yes"),
-        "includeInvalid"=> include_invalid = matches!(v.to_lowercase().as_str(),"1"|"true"|"yes"),
-        "page"=> page = v.parse::<usize>().ok().map(|n| if n<1 {1} else {n}).unwrap_or(1),
-        "pageSize"=> page_size = v.parse::<usize>().ok().map(|n| n.clamp(1,100)).unwrap_or(20),
-        _=>{}
-    }}
-    let skip = (page-1)*page_size;
-    let conn = state.db.lock().unwrap();
-    // build where
-    let mut where_sql = String::new(); let mut pv: Vec<rusqlite::types::Value> = vec![];
-    if let Some(id)=item_id.as_ref(){ where_sql.push_str(" WHERE itemId = ?"); pv.push(id.clone().into()); }
-    if !include_invalid && !include_revoked { if where_sql.is_empty(){ where_sql.push_str(" WHERE revoked = 0"); } else { where_sql.push_str(" AND revoked = 0"); } }
-    let sql = format!("SELECT token,itemId,expiresAt,maxDownloads,downloadCount,revoked,passwordHash,createdAt,updatedAt FROM ShareLink{} ORDER BY createdAt DESC LIMIT ? OFFSET ?", where_sql);
-    pv.push((page_size as i64 + 1).into()); pv.push((skip as i64).into());
-    let mut st = conn.prepare(&sql).unwrap();
-    let refs: Vec<&dyn rusqlite::ToSql> = pv.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
-    let mut rows = st.query(refs.as_slice()).unwrap();
-    let mut items: Vec<serde_json::Value> = vec![]; let now = now_unix();
-    while let Some(r) = rows.next().unwrap() {
-        let token: String = r.get(0).unwrap(); let item_id: String = r.get(1).unwrap(); let exp: Option<i64> = r.get(2).ok(); let max: Option<i64> = r.get(3).ok(); let dcnt: i64 = r.get(4).unwrap_or(0); let revoked: i64 = r.get(5).unwrap_or(0); let pwd: Option<String> = r.get(6).ok(); let created: i64 = r.get(7).unwrap_or(0);
-        // join item minimal
-        let (itype, fname, fsize):(String, Option<String>, Option<i64>) = conn.query_row("SELECT type,fileName,fileSize FROM ClipboardItem WHERE id=?", [item_id.clone()], |rr| Ok((rr.get(0)?, rr.get(1).ok(), rr.get(2).ok()))).unwrap_or(("FILE".into(), None, None));
-        let expired = exp.map(|e| e < now).unwrap_or(false);
-        let exhausted = max.map(|m| m>=0 && dcnt>=m).unwrap_or(false);
-        if !include_invalid && (revoked!=0 || expired || exhausted) { continue; }
-        items.push(serde_json::json!({
-            "token": token,
-            "url": format!("/s?token={}", token),
-            "item": {"id": item_id, "type": itype, "fileName": fname, "fileSize": fsize},
-            "expiresAt": exp.map(epoch_to_iso),
-            "maxDownloads": max,
-            "downloadCount": dcnt,
-            "revoked": revoked!=0,
-            "requiresPassword": pwd.is_some(),
-            "createdAt": epoch_to_iso(created),
-        }));
-    }
-    let has_more = items.len() > page_size; let page_items = if has_more { items[..page_size].to_vec() } else { items.clone() };
-    Json(serde_json::json!({"data": page_items, "page": page, "pageSize": page_size, "hasMore": has_more}))
-}
-
-async fn share_revoke(State(state): State<AppState>, Path(token): Path<String>) -> impl IntoResponse {
-    let conn = state.db.lock().unwrap();
-    let n = conn.execute("UPDATE ShareLink SET revoked=1, updatedAt=? WHERE token=?", params![now_unix(), token]).unwrap_or(0);
-    if n==0 { return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error":"not found"}))).into_response(); }
-    Json(serde_json::json!({"ok": true})).into_response()
-}
-
-async fn share_delete(State(state): State<AppState>, Path(token): Path<String>) -> impl IntoResponse {
-    let conn = state.db.lock().unwrap();
-    let n = conn.execute("DELETE FROM ShareLink WHERE token=?", params![token]).unwrap_or(0);
-    if n==0 { return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error":"not found"}))).into_response(); }
-    Json(serde_json::json!({"ok": true})).into_response()
-}
+// removed legacy share_create/share_list/share_delete/share_revoke endpoints (management moved into item share APIs)
 
 // share_valid_row removed (no longer used)
 
@@ -1015,6 +952,171 @@ async fn share_verify(State(state): State<AppState>, headers: HeaderMap, Path(to
     let forwarded = headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok()); let scheme = forwarded.unwrap_or("http").to_ascii_lowercase(); let secure = scheme=="https";
     let cookie = format!("share_auth_{}={}; Max-Age=604800; Path=/; SameSite=Lax; HttpOnly{}", token, expected, if secure{"; Secure"} else {""});
     let mut res = Json(serde_json::json!({"success": true})).into_response(); res.headers_mut().insert("set-cookie", HeaderValue::from_str(&cookie).unwrap()); res
+}
+
+// Return current active share for item; if none (legacy items), auto-provision a never-expiring share.
+async fn get_item_share(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    let now = now_unix();
+    // Try find latest share
+    let row = {
+        let conn = state.db.lock().unwrap();
+        conn.query_row(
+            "SELECT token, expiresAt, maxDownloads, downloadCount, revoked, passwordHash, createdAt FROM ShareLink WHERE itemId=? ORDER BY createdAt DESC LIMIT 1",
+            [id.clone()],
+            |r| Ok((
+                r.get::<_,String>(0)?, r.get::<_,Option<i64>>(1).ok().flatten(), r.get::<_,Option<i64>>(2).ok().flatten(), r.get::<_,i64>(3).unwrap_or(0), r.get::<_,i64>(4).unwrap_or(0), r.get::<_,Option<String>>(5).ok().flatten(), r.get::<_,i64>(6).unwrap_or(0)
+            ))
+        ).ok()
+    };
+    let (token, exp, max, dcnt, revoked, pwd_hash) = if let Some((t, e, m, d, rev, ph, _created)) = row { (t, e, m, d, rev, ph) } else { (String::new(), None, None, 0, 0, None) };
+    let mut token_out = token;
+    let mut exp_out = exp; let mut max_out = max; let mut dcnt_out = dcnt; let mut pwd_out = pwd_hash;
+    let invalid = token_out.is_empty() || revoked!=0 || exp_out.map(|e| e<now).unwrap_or(false) || max_out.map(|m| m>=0 && dcnt_out>=m).unwrap_or(false);
+    if invalid {
+        // Auto provision
+        let mut buf = [0u8; 18]; rand::thread_rng().fill_bytes(&mut buf);
+        let new_token = B64_URL_SAFE_NO_PAD.encode(buf);
+        let conn = state.db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO ShareLink (token,itemId,expiresAt,maxDownloads,downloadCount,revoked,passwordHash,createdAt,updatedAt) VALUES (?,?,?,?,0,0,?,?,?)",
+            params![new_token, id.clone(), Option::<i64>::None, Option::<i64>::None, Option::<String>::None, now, now]
+        );
+        token_out = new_token; exp_out=None; max_out=None; dcnt_out=0; pwd_out=None;
+    }
+    let url = format!("/s/?token={}", token_out);
+    Json(serde_json::json!({
+        "token": token_out,
+        "url": url,
+        "expiresAt": exp_out.map(epoch_to_iso),
+        "maxDownloads": max_out,
+        "downloadCount": dcnt_out,
+        "requiresPassword": pwd_out.is_some(),
+    }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ShareUpdateReq { expires_in: Option<i64>, max_downloads: Option<i64>, password: Option<String>, reset: Option<bool>, disable: Option<bool> }
+
+async fn update_item_share(State(state): State<AppState>, Path(id): Path<String>, Json(req): Json<ShareUpdateReq>) -> impl IntoResponse {
+    let now = now_unix();
+    let mut conn = state.db.lock().unwrap();
+    if matches!(req.disable, Some(true)) {
+        let _ = conn.execute("UPDATE ShareLink SET revoked=1, updatedAt=? WHERE itemId=? AND revoked=0", params![now, id]);
+        return Json(serde_json::json!({"ok": true}));
+    }
+    // get latest row for item or create
+    let current: Option<(String, Option<i64>, Option<i64>, i64, Option<String>)> = conn.query_row(
+        "SELECT token, expiresAt, maxDownloads, downloadCount, passwordHash FROM ShareLink WHERE itemId=? ORDER BY createdAt DESC LIMIT 1",
+        [id.clone()], |r| Ok((r.get(0)?, r.get(1).ok().flatten(), r.get(2).ok().flatten(), r.get(3).unwrap_or(0), r.get(4).ok().flatten()))
+    ).ok();
+    let mut token = if let Some((t,_,_,_,_)) = current.as_ref() { t.clone() } else {
+        let mut buf=[0u8;18]; rand::thread_rng().fill_bytes(&mut buf); let t=B64_URL_SAFE_NO_PAD.encode(buf);
+        let _ = conn.execute("INSERT INTO ShareLink (token,itemId,expiresAt,maxDownloads,downloadCount,revoked,passwordHash,createdAt,updatedAt) VALUES (?,?,?,?,0,0,?,?,?)", params![t, id.clone(), Option::<i64>::None, Option::<i64>::None, Option::<String>::None, now, now]);
+        t
+    };
+    let expires_abs: Option<i64> = req.expires_in.and_then(|sec| if sec>0 { Some(now + sec) } else { None });
+    let max = req.max_downloads.or_else(|| current.as_ref().and_then(|c| c.2));
+    if matches!(req.reset, Some(true)) {
+        let mut buf=[0u8;18]; rand::thread_rng().fill_bytes(&mut buf); let new_token=B64_URL_SAFE_NO_PAD.encode(buf);
+        let new_hash: Option<String> = req.password.as_ref().and_then(|p| if p.trim().is_empty(){ None } else { let mut h=Sha256::new(); h.update(p.as_bytes()); h.update(b"|"); h.update(new_token.as_bytes()); Some(format!("{:x}", h.finalize())) });
+        let _ = conn.execute("UPDATE ShareLink SET token=?, expiresAt=?, maxDownloads=?, passwordHash=?, updatedAt=? WHERE token=?", params![new_token, expires_abs, max, new_hash, now, token]);
+        token = new_token;
+    } else {
+        if req.password.is_some() || req.expires_in.is_some() || req.max_downloads.is_some() {
+            let hash: Option<String> = req.password.as_ref().and_then(|p| if p.trim().is_empty(){ None } else { let mut h=Sha256::new(); h.update(p.as_bytes()); h.update(b"|"); h.update(token.as_bytes()); Some(format!("{:x}", h.finalize())) });
+            let _ = conn.execute("UPDATE ShareLink SET expiresAt=?, maxDownloads=?, passwordHash=?, updatedAt=? WHERE token=?", params![expires_abs, max, hash, now, token]);
+        }
+    }
+    let (exp, maxd, dcnt, pwdhash):(Option<i64>, Option<i64>, i64, Option<String>) = conn.query_row("SELECT expiresAt, maxDownloads, downloadCount, passwordHash FROM ShareLink WHERE token=?", [token.clone()], |r| Ok((r.get(0).ok().flatten(), r.get(1).ok().flatten(), r.get(2).unwrap_or(0), r.get(3).ok().flatten()))).unwrap_or((None,None,0,None));
+    let url = format!("/s/?token={}", token);
+    Json(serde_json::json!({
+        "token": token,
+        "url": url,
+        "expiresAt": exp.map(epoch_to_iso),
+        "maxDownloads": maxd,
+        "downloadCount": dcnt,
+        "requiresPassword": pwdhash.is_some(),
+    }))
+}
+
+// Generate QR code SVG for a share link. No auth required.
+// GET /api/share/:token/qr?size=256&margin=2&download=0
+async fn share_qr(State(state): State<AppState>, headers: HeaderMap, Path(token): Path<String>, uri: Uri) -> impl IntoResponse {
+    // Validate share is still valid (not revoked/expired/exhausted)
+    let row = {
+        let conn = state.db.lock().unwrap();
+        conn.query_row(
+            "SELECT expiresAt, maxDownloads, downloadCount, revoked FROM ShareLink WHERE token=?",
+            [token.clone()],
+            |r| Ok((r.get::<_, Option<i64>>(0).ok().flatten(), r.get::<_, Option<i64>>(1).ok().flatten(), r.get::<_, i64>(2).unwrap_or(0), r.get::<_, i64>(3).unwrap_or(0)))
+        ).ok()
+    };
+    if row.is_none() { return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error":"not found"}))).into_response(); }
+    let (exp, max, dcnt, revoked) = row.unwrap();
+    let now = now_unix();
+    if revoked != 0 || exp.map(|e| e < now).unwrap_or(false) || max.map(|m| m>=0 && dcnt>=m).unwrap_or(false) {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error":"not found"}))).into_response();
+    }
+
+    // Parse query params
+    let q = uri.query().unwrap_or("");
+    let params: Vec<(String, String)> = form_urlencoded::parse(q.as_bytes()).into_owned().collect();
+    let mut size: u32 = 256; // pixels
+    let mut margin: u32 = 2; // modules
+    let mut download: bool = false;
+    for (k, v) in params {
+        match k.as_str() {
+            "size" => size = v.parse::<u32>().ok().map(|n| n.clamp(64, 4096)).unwrap_or(256),
+            "margin" => margin = v.parse::<u32>().ok().map(|n| n.min(32)).unwrap_or(2),
+            "download" => download = matches!(v.as_str(), "1"|"true"|"yes"),
+            _ => {}
+        }
+    }
+
+    // Build absolute URL to the share page
+    let scheme = headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok()).unwrap_or("http").to_ascii_lowercase();
+    let host = headers.get(axum::http::header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("localhost");
+    let url = format!("{}://{}/s?token={}", scheme, host, token);
+
+    // Generate QR SVG
+    let svg = match make_qr_svg(&url, size, margin) {
+        Ok(s) => s,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":"qr failed"}))).into_response(),
+    };
+    let mut hm = axum::http::HeaderMap::new();
+    hm.insert(axum::http::header::CONTENT_TYPE, HeaderValue::from_static("image/svg+xml"));
+    hm.insert(axum::http::header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=604800"));
+    if download {
+        let fname = format!("share-{}.svg", &token[..std::cmp::min(8, token.len())]);
+        hm.insert(axum::http::header::CONTENT_DISPOSITION, HeaderValue::from_str(&format!("attachment; filename=\"{}\"", fname)).unwrap());
+    }
+    (StatusCode::OK, hm, svg).into_response()
+}
+
+fn make_qr_svg(text: &str, size_px: u32, margin_modules: u32) -> Result<String, ()> {
+    use qrcodegen::{QrCode, QrCodeEcc};
+    let qr = QrCode::encode_text(text, QrCodeEcc::Medium).map_err(|_| ())?;
+    let dim = qr.size() as i32; // modules
+    let border = margin_modules as i32;
+    let total_modules = dim + 2*border;
+    let scale = (size_px as f32) / (total_modules as f32);
+    let mut s = String::with_capacity(1024);
+    s.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>"#);
+    s.push_str(&format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{0}\" height=\"{0}\" viewBox=\"0 0 {0} {0}\" shape-rendering=\"crispEdges\">", size_px));
+    s.push_str("<rect width=\"100%\" height=\"100%\" fill=\"#ffffff\"/>");
+    // draw dark modules
+    for y in 0..dim {
+        for x in 0..dim {
+            if qr.get_module(x, y) { // dark pixel
+                let fx = ((x + border) as f32) * scale;
+                let fy = ((y + border) as f32) * scale;
+                s.push_str(&format!("<rect x=\"{:.3}\" y=\"{:.3}\" width=\"{:.3}\" height=\"{:.3}\" fill=\"#000000\"/>", fx, fy, scale, scale));
+            }
+        }
+    }
+    s.push_str("</svg>");
+    Ok(s)
 }
 
 async fn share_file_inner(state: AppState, token: String, headers: HeaderMap) -> impl IntoResponse {

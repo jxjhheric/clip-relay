@@ -29,7 +29,7 @@ const ClipboardGrid = dynamic(() => import('@/components/clipboard/ClipboardGrid
 const ClipboardList = dynamic(() => import('@/components/clipboard/ClipboardList'), { ssr: false });
 const AddItemDialog = dynamic(() => import('@/components/clipboard/AddItemDialog'), { ssr: false });
 const ItemDetailDialog = dynamic(() => import('@/components/clipboard/ItemDetailDialog'), { ssr: false });
-const ShareManagerDialog = dynamic(() => import('@/components/clipboard/ShareManagerDialog'), { ssr: false });
+// ShareManagerDialog no longer needed in new flow
 const CreateShareDialog = dynamic(() => import('@/components/clipboard/CreateShareDialog'), { ssr: false });
 
 type ClipboardItem = GridItem;
@@ -43,13 +43,14 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedItem, setSelectedItem] = useState<ClipboardItem | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
-  const [shareMgrOpen, setShareMgrOpen] = useState(false);
+  // const [shareMgrOpen, setShareMgrOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [shareItemId, setShareItemId] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [shareInitial, setShareInitial] = useState<{ token: string; url: string } | null>(null);
   const [nextCursor, setNextCursor] = useState<{ id: string; createdAt: string; sortWeight?: number } | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -376,10 +377,11 @@ export default function Home() {
               </Button>
             </div>
             <div className="flex gap-2 items-center">
-              <AddItemDialog onItemAdded={() => fetchItems(searchTerm)} />
-              <Button variant="outline" onClick={() => setShareMgrOpen(true)}>
-                分享管理
-              </Button>
+              <AddItemDialog
+                onItemAdded={() => fetchItems(searchTerm)}
+                onShareCreated={(share) => { setShareInitial(share); setShareItemId(null); setShareOpen(true); }}
+              />
+              {/* 分享管理已整合到详情页，入口暂时隐藏 */}
               {/* Desktop settings */}
               <Button variant="ghost" size="icon" title="设置" className="hidden sm:inline-flex" onClick={() => setSettingsOpen(true)}>
                 <Menu className="h-5 w-5" />
@@ -463,7 +465,12 @@ export default function Home() {
             <p className="text-muted-foreground mb-4">
               {searchTerm ? '没有找到匹配的内容' : '点击上方按钮添加新的剪贴板内容'}
             </p>
-            {!searchTerm && <AddItemDialog onItemAdded={() => fetchItems(searchTerm)} />}
+            {!searchTerm && (
+              <AddItemDialog
+                onItemAdded={() => fetchItems(searchTerm)}
+                onShareCreated={(share) => { setShareInitial(share); setShareItemId(null); setShareOpen(true); }}
+              />
+            )}
           </div>
         )}
 
@@ -491,7 +498,15 @@ export default function Home() {
       </AlertDialog>
 
       {/* 创建分享链接（单例） */}
-      <CreateShareDialog itemId={shareItemId} open={shareOpen} onOpenChange={(o) => { setShareOpen(o); if (!o) setShareItemId(null); }} />
+      <CreateShareDialog
+        itemId={shareItemId}
+        open={shareOpen}
+        initialShare={shareInitial}
+        onOpenChange={(o) => {
+          setShareOpen(o);
+          if (!o) { setShareItemId(null); setShareInitial(null); }
+        }}
+      />
 
       {/* 详情对话框 */}
       <ItemDetailDialog
@@ -501,8 +516,7 @@ export default function Home() {
         onDelete={(id) => { handleDelete(id); setSelectedItem(null); }}
       />
 
-      {/* 分享管理 */}
-      <ShareManagerDialog open={shareMgrOpen} onOpenChange={setShareMgrOpen} />
+      {/* 分享管理已移除 */}
     </div>
   );
 }

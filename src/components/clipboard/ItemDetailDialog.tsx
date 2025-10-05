@@ -19,7 +19,6 @@ import { useToast } from "@/hooks/use-toast";
 import { safeCopyText, safeCopyBlob } from "@/lib/copy";
 import { File as FileIcon, FileText, Image as ImageIcon, Copy } from "lucide-react";
 import { formatFileSize } from "@/lib/format";
-import CreateShareDialog from "@/components/clipboard/CreateShareDialog";
 
 type ClipboardItem = {
   id: string;
@@ -43,7 +42,6 @@ export default function ItemDetailDialog({
   onDelete: (id: string) => void;
 }) {
   const { toast } = useToast();
-  const [shareOpen, setShareOpen] = useState(false);
   const [imgBlob, setImgBlob] = useState<Blob | null>(null);
   const [imgMime, setImgMime] = useState<string | null>(null);
 
@@ -65,6 +63,7 @@ export default function ItemDetailDialog({
     }
     return () => { aborted = true; };
   }, [open, item?.id, item?.type]);
+
 
   if (!item) return null;
 
@@ -197,6 +196,8 @@ export default function ItemDetailDialog({
             </div>
           )}
 
+          {/* 分享功能已迁移到条目外的分享图标和全局对话框，这里不再展示 */}
+
           <div>
             <h3 className="text-sm font-medium mb-2">元数据</h3>
             <div className="bg-muted p-4 rounded-lg space-y-2">
@@ -236,9 +237,6 @@ export default function ItemDetailDialog({
               </AlertDialogContent>
             </AlertDialog>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setShareOpen(true)}>
-                分享
-              </Button>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
                 关闭
               </Button>
@@ -246,8 +244,6 @@ export default function ItemDetailDialog({
           </div>
         </div>
       </DialogContent>
-      {/* 创建分享链接（详情内快捷入口） */}
-      <CreateShareDialog itemId={item.id} open={shareOpen} onOpenChange={setShareOpen} />
     </Dialog>
   );
 }

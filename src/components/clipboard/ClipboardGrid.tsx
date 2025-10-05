@@ -114,7 +114,7 @@ const SortableItem = React.memo(function SortableItem({ id, item, onSelectItem, 
               {getTypeIcon(item.type)}
               <Badge variant="secondary">{item.type}</Badge>
             </div>
-            <div className="flex gap-1 items-center opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="flex gap-1 items-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
               <Button
                 size="sm"
                 variant="ghost"

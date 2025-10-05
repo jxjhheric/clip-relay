@@ -8,10 +8,12 @@ import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { getAuthHeaders } from "@/lib/auth";
+import { safeCopyText, isSecure } from "@/lib/copy";
 import axios from "axios";
 import { File as FileIcon, Plus } from "lucide-react";
+// unified add-and-share flow: configure share params here and show result after creation
 
-export default function AddItemDialog({ onItemAdded }: { onItemAdded: () => void }) {
+export default function AddItemDialog({ onItemAdded, onShareCreated }: { onItemAdded: () => void; onShareCreated?: (share: { token: string; url: string }) => void }) {
   const [open, setOpen] = useState(false);
   const [content, setContent] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -19,6 +21,12 @@ export default function AddItemDialog({ onItemAdded }: { onItemAdded: () => void
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const { toast } = useToast();
+
+  // Share params for creation
+  const [shareExpiresIn, setShareExpiresIn] = useState<string>("0"); // 0 = 永不过期
+  const [shareMaxDownloads, setShareMaxDownloads] = useState<string>("");
+  const [sharePassword, setSharePassword] = useState<string>("");
+  const [shareResult, setShareResult] = useState<{ token: string; url: string } | null>(null);
 
   const handleFileSelect = (selectedFile: File) => {
     setFile(selectedFile);
@@ -29,6 +37,10 @@ export default function AddItemDialog({ onItemAdded }: { onItemAdded: () => void
     setFile(null);
     setIsDragging(false);
     setUploadProgress(null);
+    setShareExpiresIn("0");
+    setShareMaxDownloads("");
+    setSharePassword("");
+    setShareResult(null);
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -84,8 +96,12 @@ export default function AddItemDialog({ onItemAdded }: { onItemAdded: () => void
         formData.append("file", file);
       }
       formData.append("type", itemType);
+      // share params
+      formData.append("shareExpiresIn", shareExpiresIn || "0");
+      if (shareMaxDownloads.trim()) formData.append("shareMaxDownloads", shareMaxDownloads.trim());
+      if (sharePassword.trim()) formData.append("sharePassword", sharePassword.trim());
 
-      await axios.post("/api/clipboard", formData, {
+      const createRes = await axios.post("/api/clipboard", formData, {
         headers: { ...(getAuthHeaders() as Record<string, string>), "Content-Type": "multipart/form-data" },
         signal: abortControllerRef.current.signal,
         onUploadProgress(progressEvent) {
@@ -94,10 +110,27 @@ export default function AddItemDialog({ onItemAdded }: { onItemAdded: () => void
         },
       });
 
-      toast({ title: "添加成功" });
-      resetForm();
-      setOpen(false);
+      const data = createRes.data as any;
       onItemAdded();
+      if (data?.share?.token && data?.share?.url) {
+        const origin = typeof window !== 'undefined' ? window.location.origin : '';
+        const res = { token: data.share.token, url: origin + data.share.url };
+        // Prefer opening global share dialog so UI is consistent and not affected by local re-renders
+        if (onShareCreated) {
+          onShareCreated(res);
+          // Close this add dialog after delegating to global share dialog
+          setOpen(false);
+          resetForm();
+        } else {
+          setShareResult(res);
+        }
+        toast({ title: "已添加并生成分享" });
+        // 清空输入，以便继续添加；保留结果区域
+        setContent("");
+        setFile(null);
+      } else {
+        toast({ title: "添加成功" });
+      }
     } catch (error: any) {
       if (axios.isCancel(error)) {
         toast({ title: "已取消上传" });
@@ -132,12 +165,14 @@ export default function AddItemDialog({ onItemAdded }: { onItemAdded: () => void
           添加条目
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md max-h[80vh] flex flex-col" onPaste={handlePaste}>
+      <DialogContent className="sm:max-w-md max-h-[80vh] flex flex-col" onPaste={handlePaste}>
         <DialogHeader>
           <DialogTitle>添加新条目</DialogTitle>
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto space-y-4">
+          {!shareResult ? (
+          <>
           <div>
             <label className="text-sm font-medium mb-2 block">内容</label>
             <div className="relative">
@@ -195,6 +230,31 @@ export default function AddItemDialog({ onItemAdded }: { onItemAdded: () => void
             )}
           </div>
 
+          {/* 分享设置 */}
+          <div className="pt-4 border-t">
+            <div className="text-sm font-medium mb-2">分享设置</div>
+            <div className="grid grid-cols-1 gap-3">
+              <div>
+                <label className="text-sm font-medium mb-1 block">有效期</label>
+                <select className="w-full rounded border px-2 py-1 text-sm bg-background" value={shareExpiresIn} onChange={(e) => setShareExpiresIn(e.target.value)}>
+                  <option value="0">永不过期</option>
+                  <option value="3600">1 小时</option>
+                  <option value="86400">24 小时</option>
+                  <option value="604800">7 天</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">最大下载次数（可选）</label>
+                <Input type="number" placeholder="不限则留空" value={shareMaxDownloads} onChange={(e) => setShareMaxDownloads(e.target.value)} min={1} />
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">分享口令（可选）</label>
+                <Input type="password" placeholder="不设置则留空" value={sharePassword} onChange={(e) => setSharePassword(e.target.value)} />
+              </div>
+            </div>
+          </div>
+
+          {/* 底部按钮 */}
           <div className="flex justify-between items-center pt-4 border-t bg-background">
             <div className="text-xs text-muted-foreground"></div>
             <div className="flex gap-2">
@@ -206,6 +266,43 @@ export default function AddItemDialog({ onItemAdded }: { onItemAdded: () => void
               </Button>
             </div>
           </div>
+
+          </>
+          ) : (
+            <div className="space-y-4">
+              <div className="text-sm font-medium">分享已创建</div>
+              <div className="flex gap-2 items-center">
+                <Input readOnly value={shareResult.url} />
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    const ok = await safeCopyText(shareResult.url);
+                    if (!ok) {
+                      try { window.prompt(isSecure() ? '浏览器限制或权限不足，请手动复制：' : '当前为 HTTP 环境，系统复制受限，请手动复制：', shareResult.url); } catch {}
+                    }
+                    toast({ title: ok ? '已复制链接' : '请手动复制', variant: ok ? undefined : 'destructive' });
+                  }}
+                >复制</Button>
+              </div>
+              <div className="flex items-center gap-4">
+                <img src={`/api/share/${shareResult.token}/qr?size=240`} alt="分享二维码" className="border rounded bg-white p-2" width={240} height={240} />
+                <div className="flex flex-col gap-2">
+                  <Button variant="outline" onClick={() => window.open(`/api/share/${shareResult.token}/qr?size=1024&download=1`, '_blank')}>下载二维码</Button>
+                  <Button
+                    variant="outline"
+                    onClick={async () => {
+                      try { if ((navigator as any).share) { await (navigator as any).share({ title: '分享', url: shareResult.url }); return; } } catch {}
+                      const ok = await safeCopyText(shareResult.url);
+                      toast({ title: ok ? '已复制链接' : '请手动复制', variant: ok ? undefined : 'destructive' });
+                    }}
+                  >系统分享/复制</Button>
+                </div>
+              </div>
+              <div className="flex justify-end">
+                <Button onClick={() => { setShareResult(null); setOpen(false); resetForm(); }}>完成</Button>
+              </div>
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>
