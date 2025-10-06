@@ -99,27 +99,28 @@ async fn main() -> anyhow::Result<()> {
     let api = Router::new().nest("/api", protected.merge(public));
 
     // Static front-end serving (tries STATIC_DIR, then ./out, ./.next-export, ../out, ../.next-export)
-    let static_root = if let Ok(s) = env::var("STATIC_DIR") {
-        PathBuf::from(s)
-    } else {
-        let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let c1 = cwd.join("out");
-        if c1.exists() {
-            c1
-        } else {
-            let c2 = cwd.join(".next-export");
-            if c2.exists() {
-                c2
+    let static_root = env::var("STATIC_DIR").map_or_else(
+        |_| {
+            let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let c1 = cwd.join("out");
+            if c1.exists() {
+                c1
             } else {
-                let p1 = cwd.join("..").join("out");
-                if p1.exists() {
-                    p1
+                let c2 = cwd.join(".next-export");
+                if c2.exists() {
+                    c2
                 } else {
-                    cwd.join("..").join(".next-export")
+                    let p1 = cwd.join("..").join("out");
+                    if p1.exists() {
+                        p1
+                    } else {
+                        cwd.join("..").join(".next-export")
+                    }
                 }
             }
-        }
-    };
+        },
+        PathBuf::from,
+    );
     // We'll handle static files ourselves to support precompressed .br
     let spa_index_path = static_root.join("index.html");
     // Share entry: prefer s/index.html, fallback to s.html (Next export may choose either)
@@ -272,17 +273,15 @@ fn accept_br(headers: &HeaderMap) -> bool {
     headers
         .get(axum::http::header::ACCEPT_ENCODING)
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').any(|e| e.trim().starts_with("br")))
-        .unwrap_or(false)
+        .is_some_and(|s| s.split(',').any(|e| e.trim().starts_with("br")))
 }
 
 fn sanitize_path(input: &str) -> PathBuf {
     use std::path::Component;
     let mut p = PathBuf::new();
     for c in std::path::Path::new(input).components() {
-        match c {
-            Component::Normal(seg) => p.push(seg),
-            _ => {}
+        if let Component::Normal(seg) = c {
+            p.push(seg);
         }
     }
     p
@@ -304,8 +303,7 @@ async fn serve_file_prefer_br(file_path: PathBuf, headers: HeaderMap) -> Respons
         if tokio::fs::metadata(&br_path)
             .await
             .ok()
-            .map(|m| m.is_file())
-            .unwrap_or(false)
+            .is_some_and(|m| m.is_file())
         {
             chosen = br_path;
             ce = Some("br");
@@ -315,7 +313,7 @@ async fn serve_file_prefer_br(file_path: PathBuf, headers: HeaderMap) -> Respons
         Ok(f) => {
             // metadata for caching
             let meta = tokio::fs::metadata(&chosen).await.ok();
-            let len = meta.as_ref().map(|m| m.len());
+            let len = meta.as_ref().map(std::fs::Metadata::len);
             let etag = meta.as_ref().and_then(make_weak_etag);
             let is_html = orig_ct.starts_with("text/html");
 
@@ -327,8 +325,7 @@ async fn serve_file_prefer_br(file_path: PathBuf, headers: HeaderMap) -> Respons
                 if inm
                     .to_str()
                     .ok()
-                    .map(|s| s.split(',').any(|v| v.trim() == tag))
-                    .unwrap_or(false)
+                    .is_some_and(|s| s.split(',').any(|v| v.trim() == tag))
                 {
                     let mut hm = axum::http::HeaderMap::new();
                     cache_headers_for_path(&mut hm, None, is_html);
@@ -401,8 +398,8 @@ async fn static_handler(
     let mut target = static_root.join(&rel);
     // If directory or empty => index.html
     let meta = tokio::fs::metadata(&target).await.ok();
-    let target_is_file = meta.as_ref().map(|m| m.is_file()).unwrap_or(false);
-    let target_is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+    let target_is_file = meta.as_ref().is_some_and(|m| m.is_file());
+    let target_is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
     if rel.as_os_str().is_empty() || target_is_dir {
         target = static_root.join("index.html");
     } else if !target_is_file {
@@ -603,7 +600,7 @@ async fn auth_verify(
         .ok()
         .and_then(|s| s.parse::<i64>().ok())
         .filter(|v| *v > 0)
-        .unwrap_or(604800); // 7 days
+        .unwrap_or(604_800); // 7 days
     let cookie = format!(
         "auth={}; Max-Age={}; Path=/; SameSite={}; HttpOnly{}",
         expected,
@@ -756,7 +753,7 @@ async fn sse_events(
                     let e = Event::default().event(ev.name).data(data);
                     yield Ok::<Event, Infallible>(e);
                 }
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Lagged(_)) => {},
                 Err(broadcast::error::RecvError::Closed) => break,
             }
         }
@@ -849,7 +846,7 @@ fn init_db(data_dir: &StdPath) -> anyhow::Result<Connection> {
     let db_path = data_dir.join("custom.db");
     let conn = Connection::open(db_path)?;
     conn.execute_batch(
-        r#"
+        r"
         PRAGMA foreign_keys = ON;
         CREATE TABLE IF NOT EXISTS ClipboardItem (
           id TEXT PRIMARY KEY NOT NULL,
@@ -880,12 +877,12 @@ fn init_db(data_dir: &StdPath) -> anyhow::Result<Connection> {
         );
         CREATE INDEX IF NOT EXISTS share_item_idx ON ShareLink (itemId);
         CREATE INDEX IF NOT EXISTS share_created_idx ON ShareLink (createdAt);
-        "#,
+        ",
     )?;
     // best-effort schema migration: add passwordPlain column if missing
     let need_add_password_plain = conn
         .prepare("SELECT passwordPlain FROM ShareLink LIMIT 1")
-        .and_then(|_| Ok(false))
+        .map(|_| false)
         .unwrap_or(true);
     if need_add_password_plain {
         let _ = conn.execute("ALTER TABLE ShareLink ADD COLUMN passwordPlain TEXT", []);
@@ -1540,8 +1537,8 @@ async fn share_meta(
         )
     };
     // validity check and cleanup
-    let is_expired = exp.map(|e| e < now_unix()).unwrap_or(false);
-    let is_exhausted = max.map(|m| m >= 0 && dcnt >= m).unwrap_or(false);
+    let is_expired = exp.is_some_and(|e| e < now_unix());
+    let is_exhausted = max.is_some_and(|m| m >= 0 && dcnt >= m);
     if revoked != 0 || is_expired || is_exhausted {
         // Delete expired/exhausted items automatically
         if is_expired || is_exhausted {
@@ -1659,16 +1656,6 @@ async fn get_item_share(
 ) -> impl IntoResponse {
     let now = now_unix();
     // Try find latest share
-    let row = {
-        let conn = state.db.lock().unwrap();
-        conn.query_row(
-            "SELECT token, expiresAt, maxDownloads, downloadCount, revoked, passwordHash, createdAt FROM ShareLink WHERE itemId=? ORDER BY createdAt DESC LIMIT 1",
-            [id.clone()],
-            |r| Ok((
-                r.get::<_,String>(0)?, r.get::<_,Option<i64>>(1).ok().flatten(), r.get::<_,Option<i64>>(2).ok().flatten(), r.get::<_,i64>(3).unwrap_or(0), r.get::<_,i64>(4).unwrap_or(0), r.get::<_,Option<String>>(5).ok().flatten(), r.get::<_,i64>(6).unwrap_or(0)
-            ))
-        ).ok()
-    };
     let row2 = {
         let conn = state.db.lock().unwrap();
         conn.query_row(
@@ -1747,7 +1734,8 @@ async fn update_item_share(
         return Json(serde_json::json!({"ok": true}));
     }
     // get latest row for item or create
-    let current: Option<(String, Option<i64>, Option<i64>, i64, Option<String>)> = conn.query_row(
+    type ShareSnapshot = (String, Option<i64>, Option<i64>, i64, Option<String>);
+    let current: Option<ShareSnapshot> = conn.query_row(
         "SELECT token, expiresAt, maxDownloads, downloadCount, passwordHash FROM ShareLink WHERE itemId=? ORDER BY createdAt DESC LIMIT 1",
         [id.clone()], |r| Ok((r.get(0)?, r.get(1).ok().flatten(), r.get(2).ok().flatten(), r.get(3).unwrap_or(0), r.get(4).ok().flatten()))
     ).ok();
@@ -1790,8 +1778,7 @@ async fn update_item_share(
         });
         let _ = conn.execute("UPDATE ShareLink SET token=?, expiresAt=?, maxDownloads=?, passwordHash=?, passwordPlain=?, updatedAt=? WHERE token=?", params![new_token, expires_abs, max, new_hash, new_plain, now, token]);
         token = new_token;
-    } else {
-        if req.password.is_some() || req.expires_in.is_some() || req.max_downloads.is_some() {
+    } else if req.password.is_some() || req.expires_in.is_some() || req.max_downloads.is_some() {
             let hash: Option<String> = req.password.as_ref().and_then(|p| {
                 if p.trim().is_empty() {
                     None
@@ -1811,7 +1798,6 @@ async fn update_item_share(
                 }
             });
             let _ = conn.execute("UPDATE ShareLink SET expiresAt=?, maxDownloads=?, passwordHash=?, passwordPlain=?, updatedAt=? WHERE token=?", params![expires_abs, max, hash, plain, now, token]);
-        }
     }
     let (exp, maxd, dcnt, pwdhash, pwdplain):(Option<i64>, Option<i64>, i64, Option<String>, Option<String>) = conn.query_row(
         "SELECT expiresAt, maxDownloads, downloadCount, passwordHash, passwordPlain FROM ShareLink WHERE token=?",
@@ -1947,7 +1933,8 @@ async fn share_qr(
         let fname = format!("share-{}.svg", &token[..std::cmp::min(8, token.len())]);
         hm.insert(
             axum::http::header::CONTENT_DISPOSITION,
-            HeaderValue::from_str(&format!("attachment; filename=\"{}\"", fname)).unwrap(),
+            HeaderValue::from_str(&format!("attachment; filename=\"{fname}\""))
+                .unwrap(),
         );
     }
     (StatusCode::OK, hm, svg).into_response()
@@ -1956,13 +1943,13 @@ async fn share_qr(
 fn make_qr_svg(text: &str, size_px: u32, margin_modules: u32) -> Result<String, ()> {
     use qrcodegen::{QrCode, QrCodeEcc};
     let qr = QrCode::encode_text(text, QrCodeEcc::Medium).map_err(|_| ())?;
-    let dim = qr.size() as i32; // modules
+    let dim = qr.size(); // modules
     let border = margin_modules as i32;
     let total_modules = dim + 2 * border;
     let scale = (size_px as f32) / (total_modules as f32);
     let mut s = String::with_capacity(1024);
     s.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>"#);
-    s.push_str(&format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{0}\" height=\"{0}\" viewBox=\"0 0 {0} {0}\" shape-rendering=\"crispEdges\">", size_px));
+    s.push_str(&format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{size_px}\" height=\"{size_px}\" viewBox=\"0 0 {size_px} {size_px}\" shape-rendering=\"crispEdges\">"));
     s.push_str("<rect width=\"100%\" height=\"100%\" fill=\"#ffffff\"/>");
     // draw dark modules
     for y in 0..dim {
@@ -1971,7 +1958,7 @@ fn make_qr_svg(text: &str, size_px: u32, margin_modules: u32) -> Result<String, 
                 // dark pixel
                 let fx = ((x + border) as f32) * scale;
                 let fy = ((y + border) as f32) * scale;
-                s.push_str(&format!("<rect x=\"{:.3}\" y=\"{:.3}\" width=\"{:.3}\" height=\"{:.3}\" fill=\"#000000\"/>", fx, fy, scale, scale));
+                s.push_str(&format!("<rect x=\"{fx:.3}\" y=\"{fy:.3}\" width=\"{scale:.3}\" height=\"{scale:.3}\" fill=\"#000000\"/>"));
             }
         }
     }
@@ -2017,8 +2004,8 @@ async fn share_file_inner(state: AppState, token: String, headers: HeaderMap) ->
         inline,
     ) = row.unwrap();
     // validity check and cleanup
-    let is_expired = exp.map(|e| e < now_unix()).unwrap_or(false);
-    let is_exhausted = max.map(|m| m >= 0 && dcnt >= m).unwrap_or(false);
+    let is_expired = exp.is_some_and(|e| e < now_unix());
+    let is_exhausted = max.is_some_and(|m| m >= 0 && dcnt >= m);
     if revoked != 0 || is_expired || is_exhausted {
         if is_expired || is_exhausted {
             let conn2 = state.db.lock().unwrap();
@@ -2035,11 +2022,10 @@ async fn share_file_inner(state: AppState, token: String, headers: HeaderMap) ->
         let ok = headers
             .get(axum::http::header::COOKIE)
             .and_then(|v| v.to_str().ok())
-            .map(|c| {
+            .is_some_and(|c| {
                 c.split(';')
-                    .any(|p| p.trim() == format!("share_auth_{}={}", token_s, ph))
-            })
-            .unwrap_or(false);
+                    .any(|p| p.trim() == format!("share_auth_{token_s}={ph}"))
+            });
         if !ok {
             return (
                 StatusCode::UNAUTHORIZED,
@@ -2174,8 +2160,8 @@ async fn share_download_inner(
         inline,
     ) = row.unwrap();
     // validity check and cleanup
-    let is_expired = exp.map(|e| e < now_unix()).unwrap_or(false);
-    let is_exhausted = max.map(|m| m >= 0 && dcnt >= m).unwrap_or(false);
+    let is_expired = exp.is_some_and(|e| e < now_unix());
+    let is_exhausted = max.is_some_and(|m| m >= 0 && dcnt >= m);
     if revoked != 0 || is_expired || is_exhausted {
         if is_expired || is_exhausted {
             let conn2 = state.db.lock().unwrap();
@@ -2191,11 +2177,10 @@ async fn share_download_inner(
         let ok = headers
             .get(axum::http::header::COOKIE)
             .and_then(|v| v.to_str().ok())
-            .map(|c| {
+            .is_some_and(|c| {
                 c.split(';')
-                    .any(|p| p.trim() == format!("share_auth_{}={}", token_s, ph))
-            })
-            .unwrap_or(false);
+                    .any(|p| p.trim() == format!("share_auth_{token_s}={ph}"))
+            });
         if !ok {
             return (
                 StatusCode::UNAUTHORIZED,
