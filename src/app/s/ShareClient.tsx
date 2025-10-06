@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
+import { Copy } from 'lucide-react';
+import { safeCopyText } from '@/lib/copy';
 
 type ShareMeta = {
   token: string;
@@ -154,8 +156,19 @@ export default function ShareClient({ token }: { token: string }) {
               <div className="bg-muted p-4 rounded">
                 <pre className="whitespace-pre-wrap text-sm">{meta.item.content}</pre>
               </div>
-              <div className="mt-3">
-                <a className="underline" href={`${API_BASE}/api/share/${token}/download`}>下载为文本文件</a>
+              <div className="mt-3 flex items-center gap-3">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    const ok = await safeCopyText(meta.item.content || '');
+                    toast({ title: ok ? '已复制到剪贴板' : '复制失败', variant: ok ? undefined : 'destructive' });
+                  }}
+                >
+                  <Copy className="h-4 w-4 mr-2" />
+                  复制文本
+                </Button>
+                <a className="underline text-sm" href={`${API_BASE}/api/share/${token}/download`}>下载为文本文件</a>
               </div>
             </div>
           )}

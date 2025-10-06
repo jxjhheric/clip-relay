@@ -17,6 +17,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { safeCopyText } from '@/lib/copy';
 import { authFetch, verifyPassword, getStoredPassword, logout } from '@/lib/auth';
@@ -51,6 +52,9 @@ export default function Home() {
   const [shareItemId, setShareItemId] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   const [shareInitial, setShareInitial] = useState<{ token: string; url: string } | null>(null);
+  const [shareInitialTab, setShareInitialTab] = useState<'status'|'settings'>('status');
+  const [qrOpen, setQrOpen] = useState(false);
+  const [qrShare, setQrShare] = useState<{ token: string; url: string } | null>(null);
   const [nextCursor, setNextCursor] = useState<{ id: string; createdAt: string; sortWeight?: number } | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -379,7 +383,7 @@ export default function Home() {
             <div className="flex gap-2 items-center">
               <AddItemDialog
                 onItemAdded={() => fetchItems(searchTerm)}
-                onShareCreated={(share) => { setShareInitial(share); setShareItemId(null); setShareOpen(true); }}
+                onShareCreated={(share) => { setQrShare({ token: share.token, url: share.url }); setQrOpen(true); }}
               />
               {/* 分享管理已整合到详情页，入口暂时隐藏 */}
               {/* Desktop settings */}
@@ -427,7 +431,19 @@ export default function Home() {
             onSelectItem={(id: string) => handleSelectItem(id)}
             onCopy={copyToClipboard}
             onRequestDelete={(id: string) => { setPendingDeleteId(id); setDeleteOpen(true); }}
-            onRequestShare={(id: string) => { setShareItemId(id); setShareOpen(true); }}
+            onRequestShare={(id: string) => { setShareItemId(id); setShareInitialTab('settings'); setShareInitial(null); setShareOpen(true); }}
+            onRequestShowQr={async (id: string) => {
+              try {
+                const res = await authFetch(`/api/clipboard/${id}/share`);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data?.error || 'failed');
+                const origin = typeof window !== 'undefined' ? window.location.origin : '';
+                setQrShare({ token: data.token, url: origin + data.url });
+                setQrOpen(true);
+              } catch {
+                toast({ title: '二维码获取失败', variant: 'destructive' });
+              }
+            }}
           />
         ) : (
           <ClipboardList
@@ -454,7 +470,19 @@ export default function Home() {
             onSelectItem={(id: string) => handleSelectItem(id)}
             onCopy={copyToClipboard}
             onRequestDelete={(id: string) => { setPendingDeleteId(id); setDeleteOpen(true); }}
-            onRequestShare={(id: string) => { setShareItemId(id); setShareOpen(true); }}
+            onRequestShare={(id: string) => { setShareItemId(id); setShareInitialTab('settings'); setShareInitial(null); setShareOpen(true); }}
+            onRequestShowQr={async (id: string) => {
+              try {
+                const res = await authFetch(`/api/clipboard/${id}/share`);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data?.error || 'failed');
+                const origin = typeof window !== 'undefined' ? window.location.origin : '';
+                setQrShare({ token: data.token, url: origin + data.url });
+                setQrOpen(true);
+              } catch {
+                toast({ title: '二维码获取失败', variant: 'destructive' });
+              }
+            }}
           />
         )}
 
@@ -468,7 +496,7 @@ export default function Home() {
             {!searchTerm && (
               <AddItemDialog
                 onItemAdded={() => fetchItems(searchTerm)}
-                onShareCreated={(share) => { setShareInitial(share); setShareItemId(null); setShareOpen(true); }}
+                onShareCreated={(share) => { setQrShare({ token: share.token, url: share.url }); setQrOpen(true); }}
               />
             )}
           </div>
@@ -502,11 +530,33 @@ export default function Home() {
         itemId={shareItemId}
         open={shareOpen}
         initialShare={shareInitial}
+        initialTab={shareInitialTab}
         onOpenChange={(o) => {
           setShareOpen(o);
           if (!o) { setShareItemId(null); setShareInitial(null); }
         }}
       />
+
+      {/* 二维码弹窗 */}
+      <Dialog open={qrOpen} onOpenChange={setQrOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>分享二维码</DialogTitle>
+          </DialogHeader>
+          {qrShare ? (
+            <div className="flex flex-col items-center gap-3">
+              <img src={`/api/share/${qrShare.token}/qr?size=320`} alt="二维码" className="border rounded bg-white p-2" width={320} height={320} />
+              <div className="text-xs text-muted-foreground break-all text-center">{qrShare.url}</div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => window.open(`/api/share/${qrShare.token}/qr?size=1024&download=1`, '_blank')}>下载二维码</Button>
+                <Button variant="outline" onClick={async () => { const ok = await safeCopyText(qrShare.url); toast({ title: ok ? '已复制链接' : '请手动复制', variant: ok ? undefined : 'destructive' }); }}>复制链接</Button>
+              </div>
+            </div>
+          ) : (
+            <div className="py-6 text-center text-sm text-muted-foreground">加载中...</div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* 详情对话框 */}
       <ItemDetailDialog

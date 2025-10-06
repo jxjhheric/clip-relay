@@ -13,7 +13,7 @@ import axios from "axios";
 import { File as FileIcon, Plus } from "lucide-react";
 // unified add-and-share flow: configure share params here and show result after creation
 
-export default function AddItemDialog({ onItemAdded, onShareCreated }: { onItemAdded: () => void; onShareCreated?: (share: { token: string; url: string }) => void }) {
+export default function AddItemDialog({ onItemAdded, onShareCreated }: { onItemAdded: () => void; onShareCreated?: (share: { token: string; url: string; id?: string }) => void }) {
   const [open, setOpen] = useState(false);
   const [content, setContent] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -114,7 +114,7 @@ export default function AddItemDialog({ onItemAdded, onShareCreated }: { onItemA
       onItemAdded();
       if (data?.share?.token && data?.share?.url) {
         const origin = typeof window !== 'undefined' ? window.location.origin : '';
-        const res = { token: data.share.token, url: origin + data.share.url };
+        const res = { token: data.share.token, url: origin + data.share.url, id: data?.id };
         // Prefer opening global share dialog so UI is consistent and not affected by local re-renders
         if (onShareCreated) {
           onShareCreated(res);
@@ -244,7 +244,7 @@ export default function AddItemDialog({ onItemAdded, onShareCreated }: { onItemA
                 </select>
               </div>
               <div>
-                <label className="text-sm font-medium mb-1 block">最大下载次数（可选）</label>
+                <label className="text-sm font-medium mb-1 block">可访问次数（可选）</label>
                 <Input type="number" placeholder="不限则留空" value={shareMaxDownloads} onChange={(e) => setShareMaxDownloads(e.target.value)} min={1} />
               </div>
               <div>
