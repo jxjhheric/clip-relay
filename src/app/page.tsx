@@ -43,6 +43,9 @@ export default function Home() {
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [selectedItem, setSelectedItem] = useState<ClipboardItem | null>(null);
+  // Track the currently intended detail item and abort in-flight fetches on close
+  const selectedIdRef = useRef<string | null>(null);
+  const detailAbortRef = useRef<AbortController | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
   // const [shareMgrOpen, setShareMgrOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -166,10 +169,17 @@ export default function Home() {
   // 打开详情：先用现有列表数据即时打开，再并发拉取最新详情
   const openItemById = async (id: string) => {
     try {
-      const res = await authFetch(`/api/clipboard/${id}`);
+      // cancel previous fetch if any
+      try { detailAbortRef.current?.abort(); } catch {}
+      const ctrl = new AbortController();
+      detailAbortRef.current = ctrl;
+      const res = await authFetch(`/api/clipboard/${id}`, { signal: ctrl.signal } as any);
       if (res.ok) {
         const data = await res.json();
-        setSelectedItem(data);
+        // Only update if this item is still intended to be open
+        if (selectedIdRef.current === id) {
+          setSelectedItem(data);
+        }
       } else {
         toast({
           title: '加载失败',
@@ -178,17 +188,23 @@ export default function Home() {
         });
       }
     } catch (e) {
-      toast({
-        title: '网络错误',
-        description: '请检查连接后重试',
-        variant: 'destructive',
-      });
+      // Ignore abort errors; surface real network errors only
+      // @ts-expect-error
+      const aborted = e?.name === 'AbortError';
+      if (!aborted) {
+        toast({
+          title: '网络错误',
+          description: '请检查连接后重试',
+          variant: 'destructive',
+        });
+      }
     }
   };
 
   // 点击卡片时，优先显示已有数据，提升响应速度
   const handleSelectItem = (id: string) => {
     const local = items.find(i => i.id === id) || null;
+    selectedIdRef.current = id;
     if (local) setSelectedItem(local);
     // 后台刷新详情（含 contentType/filePath 等）
     openItemById(id);
@@ -562,7 +578,14 @@ export default function Home() {
       <ItemDetailDialog
         item={selectedItem}
         open={!!selectedItem}
-        onOpenChange={(open) => !open && setSelectedItem(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedItem(null);
+            selectedIdRef.current = null;
+            try { detailAbortRef.current?.abort(); } catch {}
+            detailAbortRef.current = null;
+          }
+        }}
         onDelete={(id) => { handleDelete(id); setSelectedItem(null); }}
       />
 
