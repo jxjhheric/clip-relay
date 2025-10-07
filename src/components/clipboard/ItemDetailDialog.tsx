@@ -89,7 +89,7 @@ export default function ItemDetailDialog({
       if (ok) {
         toast({ title: "已复制图片" });
       } else {
-        toast({ title: "无法复制图片", description: "浏览器不支持图片复制或权限不足。可长按图片复制，或使用下载按钮。", variant: "destructive" });
+        toast({ title: "无法复制图片", description: "当前使用非安全连接（HTTP），浏览器不支持图片复制。请在 HTTPS 环境下尝试。", variant: "destructive" });
       }
     } catch {
       toast({ title: "无法复制图片", description: "请长按图片复制，或使用下载按钮", variant: "destructive" });
