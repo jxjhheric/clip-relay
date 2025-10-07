@@ -58,12 +58,60 @@ export async function safeCopyBlob(blob: Blob, mime?: string): Promise<boolean> 
     const type = mime || (blob.type || 'application/octet-stream');
     // @ts-ignore ClipboardItem is available in modern browsers under secure contexts
     if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.write === 'function' && typeof ClipboardItem !== 'undefined') {
-      // @ts-ignore
-      const item = new ClipboardItem({ [type]: blob });
-      // @ts-ignore
-      await navigator.clipboard.write([item]);
-      return true;
+      try {
+        // First try original type
+        // @ts-ignore
+        const item = new ClipboardItem({ [type]: blob });
+        // @ts-ignore
+        await navigator.clipboard.write([item]);
+        return true;
+      } catch {
+        // Some browsers only allow image/png for image clipboard writes.
+        // If original is image/* but not png, convert to PNG and retry.
+        if (type.startsWith('image/') && type !== 'image/png') {
+          try {
+            const png = await convertImageBlobToPng(blob);
+            if (png) {
+              // @ts-ignore
+              const fallbackItem = new ClipboardItem({ ['image/png']: png });
+              // @ts-ignore
+              await navigator.clipboard.write([fallbackItem]);
+              return true;
+            }
+          } catch {}
+        }
+      }
     }
   } catch {}
   return false;
+}
+
+async function convertImageBlobToPng(src: Blob): Promise<Blob | null> {
+  try {
+    const url = URL.createObjectURL(src);
+    try {
+      const img: HTMLImageElement = await new Promise((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = reject;
+        i.src = url;
+        // hint: avoid blocking decode when possible
+        try { (i as any).decoding = 'async'; } catch {}
+      });
+      const w = img.naturalWidth || img.width;
+      const h = img.naturalHeight || img.height;
+      if (!w || !h) return null;
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(img, 0, 0, w, h);
+      const png: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      return png;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  } catch {
+    return null;
+  }
 }

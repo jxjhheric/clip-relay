@@ -233,6 +233,7 @@ dependencies = [
  "form_urlencoded",
  "futures-util",
  "mime_guess",
+ "qrcodegen",
  "rand",
  "rusqlite",
  "serde",
@@ -774,6 +775,12 @@ checksum = "89ae43fd86e4158d6db51ad8e2b80f313af9cc74f5c0e03ccb87de09998732de"
 dependencies = [
  "unicode-ident",
 ]
+
+[[package]]
+name = "qrcodegen"
+version = "1.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4339fc7a1021c9c1621d87f5e3505f2805c8c105420ba2f2a4df86814590c142"
 
 [[package]]
 name = "quote"

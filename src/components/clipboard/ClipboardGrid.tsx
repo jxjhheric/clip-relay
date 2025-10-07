@@ -7,7 +7,10 @@ import { CSS } from "@dnd-kit/utilities";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Copy, Share2, Trash2, FileText, Image as ImageIcon, File as FileIcon } from "lucide-react";
+import { Copy, Share2, Trash2, FileText, Image as ImageIcon, File as FileIcon, QrCode } from "lucide-react";
+import { authFetch } from "@/lib/auth";
+import { safeCopyText, isSecure } from "@/lib/copy";
+import { useToast } from "@/hooks/use-toast";
 import { formatDate, formatFileSize } from "@/lib/format";
 
 export type ClipboardItem = {
@@ -25,9 +28,10 @@ type GridProps = {
   items: ClipboardItem[];
   onReorder: (items: ClipboardItem[]) => void;
   onSelectItem: (id: string) => void;
-  onCopy: (content: string) => void;
+  onCopy: (content: string) => void; // deprecated: copy share link instead
   onRequestDelete: (id: string) => void;
   onRequestShare: (id: string) => void;
+  onRequestShowQr?: (id: string) => void;
 };
 
 function getTypeIcon(type: string) {
@@ -42,7 +46,7 @@ function getTypeIcon(type: string) {
   }
 }
 
-export default function ClipboardGrid({ items, onReorder, onSelectItem, onCopy, onRequestDelete, onRequestShare }: GridProps) {
+export default function ClipboardGrid({ items, onReorder, onSelectItem, onCopy, onRequestDelete, onRequestShare, onRequestShowQr }: GridProps) {
   const sensors = useSensors(
     // 使用移动距离阈值，避免按压延迟带来的点击迟滞感
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -74,6 +78,7 @@ export default function ClipboardGrid({ items, onReorder, onSelectItem, onCopy, 
               onCopy={onCopy}
               onRequestDelete={onRequestDelete}
               onRequestShare={onRequestShare}
+              onRequestShowQr={onRequestShowQr}
             />
           ))}
         </div>
@@ -89,10 +94,42 @@ type SortableItemProps = {
   onCopy: (content: string) => void;
   onRequestDelete: (id: string) => void;
   onRequestShare: (id: string) => void;
+  onRequestShowQr?: (id: string) => void;
 };
 
-const SortableItem = React.memo(function SortableItem({ id, item, onSelectItem, onCopy, onRequestDelete, onRequestShare }: SortableItemProps) {
+const SortableItem = React.memo(function SortableItem({ id, item, onSelectItem, onCopy, onRequestDelete, onRequestShare, onRequestShowQr }: SortableItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const { toast } = useToast();
+
+  const [shareMeta, setShareMeta] = React.useState<null | { url: string; token: string; maxDownloads: number | null; downloadCount: number; expiresAt: string | null; requiresPassword: boolean }>(null);
+  const [loadingShare, setLoadingShare] = React.useState(false);
+
+  const loadShare = React.useCallback(async () => {
+    try {
+      setLoadingShare(true);
+      const res = await authFetch(`/api/clipboard/${item.id}/share`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'failed');
+      setShareMeta({ url: data.url, token: data.token, maxDownloads: (typeof data.maxDownloads === 'number' ? data.maxDownloads : null), downloadCount: Number(data.downloadCount || 0), expiresAt: data.expiresAt || null, requiresPassword: !!data.requiresPassword });
+    } catch (e: any) {
+      toast({ title: '分享信息获取失败', variant: 'destructive' });
+    } finally {
+      setLoadingShare(false);
+    }
+  }, [item.id, toast]);
+
+  React.useEffect(() => { loadShare(); }, [loadShare]);
+
+  const copyShareLink = async () => {
+    try {
+      // Always fetch latest share info to get current URL (in case it was reset)
+      await loadShare();
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      const url = origin + (shareMeta?.url || '');
+      const ok = await safeCopyText(url);
+      if (ok) toast({ title: '已复制链接' }); else toast({ title: '请手动复制', description: isSecure() ? '浏览器限制或权限不足' : '当前为 HTTP 环境，系统复制受限', variant: 'destructive' });
+    } catch {}
+  };
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -114,16 +151,13 @@ const SortableItem = React.memo(function SortableItem({ id, item, onSelectItem, 
               {getTypeIcon(item.type)}
               <Badge variant="secondary">{item.type}</Badge>
             </div>
-            <div className="flex gap-1 items-center opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="flex gap-1 items-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
               <Button
                 size="sm"
                 variant="ghost"
                 className="cursor-pointer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (item.content) onCopy(item.content);
-                }}
-                disabled={!item.content}
+                onClick={(e) => { e.stopPropagation(); copyShareLink(); }}
+                disabled={loadingShare}
               >
                 <Copy className="h-3 w-3" />
               </Button>
@@ -139,6 +173,16 @@ const SortableItem = React.memo(function SortableItem({ id, item, onSelectItem, 
                 title="分享"
               >
                 <Share2 className="h-3 w-3" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="cursor-pointer"
+                onClick={(e) => { e.stopPropagation(); if (onRequestShowQr) onRequestShowQr(item.id); }}
+                aria-label="二维码"
+                title="二维码"
+              >
+                <QrCode className="h-3 w-3" />
               </Button>
               <Button
                 size="sm"

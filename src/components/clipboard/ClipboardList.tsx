@@ -27,8 +27,12 @@ import {
   FileText,
   Image as ImageIcon,
   File as FileIcon,
+  QrCode,
 } from "lucide-react";
 import { formatDate, formatFileSize } from "@/lib/format";
+import { authFetch } from "@/lib/auth";
+import { safeCopyText, isSecure } from "@/lib/copy";
+import { useToast } from "@/hooks/use-toast";
 import type { ClipboardItem as GridItem } from "@/components/clipboard/ClipboardGrid";
 
 export type ClipboardItem = GridItem;
@@ -40,6 +44,7 @@ type ListProps = {
   onCopy: (content: string) => void;
   onRequestDelete: (id: string) => void;
   onRequestShare: (id: string) => void;
+  onRequestShowQr?: (id: string) => void;
 };
 
 function getTypeIcon(type: string) {
@@ -61,6 +66,7 @@ export default function ClipboardList({
   onCopy,
   onRequestDelete,
   onRequestShare,
+  onRequestShowQr,
 }: ListProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -84,7 +90,7 @@ export default function ClipboardList({
       <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
         <div className="rounded-md border overflow-hidden">
           <Table>
-            <TableHeader>
+            <TableHeader className="hidden md:table-header-group">
               <TableRow>
                 <TableHead className="w-[50%] min-w-[280px]">条目</TableHead>
                 <TableHead className="w-[15%]">大小</TableHead>
@@ -102,6 +108,7 @@ export default function ClipboardList({
                   onCopy={onCopy}
                   onRequestDelete={onRequestDelete}
                   onRequestShare={onRequestShare}
+                  onRequestShowQr={onRequestShowQr}
                 />
               ))}
             </TableBody>
@@ -119,6 +126,7 @@ type RowProps = {
   onCopy: (content: string) => void;
   onRequestDelete: (id: string) => void;
   onRequestShare: (id: string) => void;
+  onRequestShowQr?: (id: string) => void;
 };
 
 const SortableRow = React.memo(function SortableRow({
@@ -128,8 +136,39 @@ const SortableRow = React.memo(function SortableRow({
   onCopy,
   onRequestDelete,
   onRequestShare,
+  onRequestShowQr,
 }: RowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const { toast } = useToast();
+  const [shareMeta, setShareMeta] = React.useState<null | { url: string; token: string; maxDownloads: number | null; downloadCount: number; expiresAt: string | null; requiresPassword: boolean }>(null);
+  const [loadingShare, setLoadingShare] = React.useState(false);
+
+  const loadShare = React.useCallback(async () => {
+    try {
+      setLoadingShare(true);
+      const res = await authFetch(`/api/clipboard/${item.id}/share`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'failed');
+      setShareMeta({ url: data.url, token: data.token, maxDownloads: (typeof data.maxDownloads === 'number' ? data.maxDownloads : null), downloadCount: Number(data.downloadCount || 0), expiresAt: data.expiresAt || null, requiresPassword: !!data.requiresPassword });
+    } catch (e: any) {
+      toast({ title: '分享信息获取失败', variant: 'destructive' });
+    } finally {
+      setLoadingShare(false);
+    }
+  }, [item.id, toast]);
+
+  React.useEffect(() => { loadShare(); }, [loadShare]);
+
+  const copyShareLink = async () => {
+    try {
+      // Always fetch latest share info to get current URL (in case it was reset)
+      await loadShare();
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      const url = origin + (shareMeta?.url || '');
+      const ok = await safeCopyText(url);
+      if (ok) toast({ title: '已复制链接' }); else toast({ title: '请手动复制', description: isSecure() ? '浏览器限制或权限不足' : '当前为 HTTP 环境，系统复制受限', variant: 'destructive' });
+    } catch {}
+  };
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -160,7 +199,8 @@ const SortableRow = React.memo(function SortableRow({
         if (!isDragging) onSelectItem(item.id);
       }}
     >
-      <TableCell>
+      {/* Desktop: traditional table layout */}
+      <TableCell className="hidden md:table-cell">
         <div className="flex items-center gap-3">
           {getTypeIcon(item.type)}
           <div className="flex flex-col min-w-0">
@@ -176,23 +216,29 @@ const SortableRow = React.memo(function SortableRow({
           </div>
         </div>
       </TableCell>
-      <TableCell>
+      <TableCell className="hidden md:table-cell">
         {typeof item.fileSize === "number" && item.fileSize > 0
           ? formatFileSize(item.fileSize)
           : "-"}
       </TableCell>
-      <TableCell>{formatDate(item.createdAt)}</TableCell>
-      <TableCell className="text-right">
+      <TableCell className="hidden md:table-cell">
+        <div>{formatDate(item.createdAt)}</div>
+        {shareMeta && (
+          <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+            <div>访问：{shareMeta.downloadCount}/{typeof shareMeta.maxDownloads === 'number' ? shareMeta.maxDownloads : '不限'}</div>
+            <div>有效期：{shareMeta.expiresAt ? new Date(shareMeta.expiresAt).toLocaleString('zh-CN') : '永不过期'}</div>
+            <div>口令：{shareMeta.requiresPassword ? '已设置' : '无'}</div>
+          </div>
+        )}
+      </TableCell>
+      <TableCell className="hidden md:table-cell text-right">
         <div className="flex justify-end gap-1">
           <Button
             size="sm"
             variant="ghost"
             className="cursor-pointer"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (item.content) onCopy(item.content);
-            }}
-            disabled={!item.content}
+            onClick={(e) => { e.stopPropagation(); copyShareLink(); }}
+            disabled={loadingShare}
             aria-label="复制"
             title="复制"
           >
@@ -215,6 +261,16 @@ const SortableRow = React.memo(function SortableRow({
             size="sm"
             variant="ghost"
             className="cursor-pointer"
+            onClick={(e) => { e.stopPropagation(); if (onRequestShowQr) onRequestShowQr(item.id); else onRequestShare(item.id); }}
+            aria-label="二维码"
+            title="二维码"
+          >
+            <QrCode className="h-3 w-3" />
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="cursor-pointer"
             onClick={(e) => {
               e.stopPropagation();
               onRequestDelete(item.id);
@@ -224,6 +280,89 @@ const SortableRow = React.memo(function SortableRow({
           >
             <Trash2 className="h-3 w-3" />
           </Button>
+        </div>
+      </TableCell>
+
+      {/* Mobile: card-like layout in single cell */}
+      <TableCell className="md:hidden" colSpan={4}>
+        <div className="flex flex-col gap-3 py-2">
+          {/* Header: icon, title, type badge */}
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5">{getTypeIcon(item.type)}</div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={"font-medium " + (isText ? "text-sm" : "")}>{primaryText}</span>
+                <Badge variant="secondary" className="text-xs">{item.type}</Badge>
+              </div>
+              {!isText && item.content && (
+                <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                  {item.content}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Metadata row */}
+          <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+            <div>{formatDate(item.createdAt)}</div>
+            {typeof item.fileSize === "number" && item.fileSize > 0 && (
+              <div>{formatFileSize(item.fileSize)}</div>
+            )}
+          </div>
+
+          {/* Share info (if available) */}
+          {shareMeta && (
+            <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+              <div>访问：{shareMeta.downloadCount}/{typeof shareMeta.maxDownloads === 'number' ? shareMeta.maxDownloads : '不限'}</div>
+              <div>有效期：{shareMeta.expiresAt ? new Date(shareMeta.expiresAt).toLocaleDateString('zh-CN') : '永不'}</div>
+              {shareMeta.requiresPassword && <div>🔒 已加密</div>}
+            </div>
+          )}
+
+          {/* Action buttons */}
+          <div className="flex items-center gap-1">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="cursor-pointer"
+              onClick={(e) => { e.stopPropagation(); copyShareLink(); }}
+              disabled={loadingShare}
+              aria-label="复制"
+              title="复制"
+            >
+              <Copy className="h-4 w-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="cursor-pointer"
+              onClick={(e) => { e.stopPropagation(); onRequestShare(item.id); }}
+              aria-label="分享"
+              title="分享"
+            >
+              <Share2 className="h-4 w-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="cursor-pointer"
+              onClick={(e) => { e.stopPropagation(); if (onRequestShowQr) onRequestShowQr(item.id); else onRequestShare(item.id); }}
+              aria-label="二维码"
+              title="二维码"
+            >
+              <QrCode className="h-4 w-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="cursor-pointer"
+              onClick={(e) => { e.stopPropagation(); onRequestDelete(item.id); }}
+              aria-label="删除"
+              title="删除"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       </TableCell>
     </tr>

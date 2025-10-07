@@ -17,6 +17,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { safeCopyText } from '@/lib/copy';
 import { authFetch, verifyPassword, getStoredPassword, logout } from '@/lib/auth';
@@ -29,7 +30,7 @@ const ClipboardGrid = dynamic(() => import('@/components/clipboard/ClipboardGrid
 const ClipboardList = dynamic(() => import('@/components/clipboard/ClipboardList'), { ssr: false });
 const AddItemDialog = dynamic(() => import('@/components/clipboard/AddItemDialog'), { ssr: false });
 const ItemDetailDialog = dynamic(() => import('@/components/clipboard/ItemDetailDialog'), { ssr: false });
-const ShareManagerDialog = dynamic(() => import('@/components/clipboard/ShareManagerDialog'), { ssr: false });
+// ShareManagerDialog no longer needed in new flow
 const CreateShareDialog = dynamic(() => import('@/components/clipboard/CreateShareDialog'), { ssr: false });
 
 type ClipboardItem = GridItem;
@@ -42,14 +43,21 @@ export default function Home() {
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [selectedItem, setSelectedItem] = useState<ClipboardItem | null>(null);
+  // Track the currently intended detail item and abort in-flight fetches on close
+  const selectedIdRef = useRef<string | null>(null);
+  const detailAbortRef = useRef<AbortController | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
-  const [shareMgrOpen, setShareMgrOpen] = useState(false);
+  // const [shareMgrOpen, setShareMgrOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [shareItemId, setShareItemId] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [shareInitial, setShareInitial] = useState<{ token: string; url: string } | null>(null);
+  const [shareInitialTab, setShareInitialTab] = useState<'status'|'settings'>('status');
+  const [qrOpen, setQrOpen] = useState(false);
+  const [qrShare, setQrShare] = useState<{ token: string; url: string } | null>(null);
   const [nextCursor, setNextCursor] = useState<{ id: string; createdAt: string; sortWeight?: number } | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -161,10 +169,17 @@ export default function Home() {
   // 打开详情：先用现有列表数据即时打开，再并发拉取最新详情
   const openItemById = async (id: string) => {
     try {
-      const res = await authFetch(`/api/clipboard/${id}`);
+      // cancel previous fetch if any
+      try { detailAbortRef.current?.abort(); } catch {}
+      const ctrl = new AbortController();
+      detailAbortRef.current = ctrl;
+      const res = await authFetch(`/api/clipboard/${id}`, { signal: ctrl.signal } as any);
       if (res.ok) {
         const data = await res.json();
-        setSelectedItem(data);
+        // Only update if this item is still intended to be open
+        if (selectedIdRef.current === id) {
+          setSelectedItem(data);
+        }
       } else {
         toast({
           title: '加载失败',
@@ -173,17 +188,23 @@ export default function Home() {
         });
       }
     } catch (e) {
-      toast({
-        title: '网络错误',
-        description: '请检查连接后重试',
-        variant: 'destructive',
-      });
+      // Ignore abort errors; surface real network errors only
+      // @ts-expect-error
+      const aborted = e?.name === 'AbortError';
+      if (!aborted) {
+        toast({
+          title: '网络错误',
+          description: '请检查连接后重试',
+          variant: 'destructive',
+        });
+      }
     }
   };
 
   // 点击卡片时，优先显示已有数据，提升响应速度
   const handleSelectItem = (id: string) => {
     const local = items.find(i => i.id === id) || null;
+    selectedIdRef.current = id;
     if (local) setSelectedItem(local);
     // 后台刷新详情（含 contentType/filePath 等）
     openItemById(id);
@@ -376,10 +397,11 @@ export default function Home() {
               </Button>
             </div>
             <div className="flex gap-2 items-center">
-              <AddItemDialog onItemAdded={() => fetchItems(searchTerm)} />
-              <Button variant="outline" onClick={() => setShareMgrOpen(true)}>
-                分享管理
-              </Button>
+              <AddItemDialog
+                onItemAdded={() => fetchItems(searchTerm)}
+                onShareCreated={(share) => { setQrShare({ token: share.token, url: share.url }); setQrOpen(true); }}
+              />
+              {/* 分享管理已整合到详情页，入口暂时隐藏 */}
               {/* Desktop settings */}
               <Button variant="ghost" size="icon" title="设置" className="hidden sm:inline-flex" onClick={() => setSettingsOpen(true)}>
                 <Menu className="h-5 w-5" />
@@ -425,7 +447,19 @@ export default function Home() {
             onSelectItem={(id: string) => handleSelectItem(id)}
             onCopy={copyToClipboard}
             onRequestDelete={(id: string) => { setPendingDeleteId(id); setDeleteOpen(true); }}
-            onRequestShare={(id: string) => { setShareItemId(id); setShareOpen(true); }}
+            onRequestShare={(id: string) => { setShareItemId(id); setShareInitialTab('settings'); setShareInitial(null); setShareOpen(true); }}
+            onRequestShowQr={async (id: string) => {
+              try {
+                const res = await authFetch(`/api/clipboard/${id}/share`);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data?.error || 'failed');
+                const origin = typeof window !== 'undefined' ? window.location.origin : '';
+                setQrShare({ token: data.token, url: origin + data.url });
+                setQrOpen(true);
+              } catch {
+                toast({ title: '二维码获取失败', variant: 'destructive' });
+              }
+            }}
           />
         ) : (
           <ClipboardList
@@ -452,7 +486,19 @@ export default function Home() {
             onSelectItem={(id: string) => handleSelectItem(id)}
             onCopy={copyToClipboard}
             onRequestDelete={(id: string) => { setPendingDeleteId(id); setDeleteOpen(true); }}
-            onRequestShare={(id: string) => { setShareItemId(id); setShareOpen(true); }}
+            onRequestShare={(id: string) => { setShareItemId(id); setShareInitialTab('settings'); setShareInitial(null); setShareOpen(true); }}
+            onRequestShowQr={async (id: string) => {
+              try {
+                const res = await authFetch(`/api/clipboard/${id}/share`);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data?.error || 'failed');
+                const origin = typeof window !== 'undefined' ? window.location.origin : '';
+                setQrShare({ token: data.token, url: origin + data.url });
+                setQrOpen(true);
+              } catch {
+                toast({ title: '二维码获取失败', variant: 'destructive' });
+              }
+            }}
           />
         )}
 
@@ -463,7 +509,12 @@ export default function Home() {
             <p className="text-muted-foreground mb-4">
               {searchTerm ? '没有找到匹配的内容' : '点击上方按钮添加新的剪贴板内容'}
             </p>
-            {!searchTerm && <AddItemDialog onItemAdded={() => fetchItems(searchTerm)} />}
+            {!searchTerm && (
+              <AddItemDialog
+                onItemAdded={() => fetchItems(searchTerm)}
+                onShareCreated={(share) => { setQrShare({ token: share.token, url: share.url }); setQrOpen(true); }}
+              />
+            )}
           </div>
         )}
 
@@ -491,18 +542,54 @@ export default function Home() {
       </AlertDialog>
 
       {/* 创建分享链接（单例） */}
-      <CreateShareDialog itemId={shareItemId} open={shareOpen} onOpenChange={(o) => { setShareOpen(o); if (!o) setShareItemId(null); }} />
+      <CreateShareDialog
+        itemId={shareItemId}
+        open={shareOpen}
+        initialShare={shareInitial}
+        initialTab={shareInitialTab}
+        onOpenChange={(o) => {
+          setShareOpen(o);
+          if (!o) { setShareItemId(null); setShareInitial(null); }
+        }}
+      />
+
+      {/* 二维码弹窗 */}
+      <Dialog open={qrOpen} onOpenChange={setQrOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>分享二维码</DialogTitle>
+          </DialogHeader>
+          {qrShare ? (
+            <div className="flex flex-col items-center gap-3">
+              <img src={`/api/share/${qrShare.token}/qr?size=320`} alt="二维码" className="border rounded bg-white p-2" width={320} height={320} />
+              <div className="text-xs text-muted-foreground break-all text-center">{qrShare.url}</div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => window.open(`/api/share/${qrShare.token}/qr?size=1024&download=1`, '_blank')}>下载二维码</Button>
+                <Button variant="outline" onClick={async () => { const ok = await safeCopyText(qrShare.url); toast({ title: ok ? '已复制链接' : '请手动复制', variant: ok ? undefined : 'destructive' }); }}>复制链接</Button>
+              </div>
+            </div>
+          ) : (
+            <div className="py-6 text-center text-sm text-muted-foreground">加载中...</div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* 详情对话框 */}
       <ItemDetailDialog
         item={selectedItem}
         open={!!selectedItem}
-        onOpenChange={(open) => !open && setSelectedItem(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedItem(null);
+            selectedIdRef.current = null;
+            try { detailAbortRef.current?.abort(); } catch {}
+            detailAbortRef.current = null;
+          }
+        }}
         onDelete={(id) => { handleDelete(id); setSelectedItem(null); }}
       />
 
-      {/* 分享管理 */}
-      <ShareManagerDialog open={shareMgrOpen} onOpenChange={setShareMgrOpen} />
+      {/* 分享管理已移除 */}
     </div>
   );
 }

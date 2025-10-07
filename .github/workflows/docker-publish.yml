@@ -19,12 +19,17 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
-      - name: Build and push Docker image (latest + sha)
+      - name: Extract branch name
+        id: extract_branch
+        run: echo "branch=${GITHUB_REF#refs/heads/}" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: Dockerfile
           push: true
           tags: |
-            ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/clip-relay:latest
-            ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/clip-relay:sha-${{ github.sha }}
+            ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/clip-relay:${{ steps.extract_branch.outputs.branch }}
+            ${{ secrets.REGISTRY_URL }}/${{ secrets.REGISTRY_NAMESPACE }}/clip-relay:${{ steps.extract_branch.outputs.branch }}-${{ github.sha }}
+            ${{ github.ref == 'refs/heads/main' && format('{0}/{1}/clip-relay:latest', secrets.REGISTRY_URL, secrets.REGISTRY_NAMESPACE) || '' }}
