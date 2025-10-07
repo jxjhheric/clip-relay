@@ -119,7 +119,7 @@ export default function ItemDetailDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto custom-scrollbar w-[calc(100vw-2rem)] sm:w-auto">
         <DialogHeader>
           <div className="flex items-center gap-3">
             {getTypeIcon(item.type)}
@@ -139,12 +139,20 @@ export default function ItemDetailDialog({
           {item.content && (
             <div>
               <h3 className="text-sm font-medium mb-2">内容</h3>
-              <div className="bg-muted p-4 rounded-lg">
-                <pre className="whitespace-pre-wrap text-sm">{item.content}</pre>
+              <div className="relative bg-muted p-4 rounded-lg group">
+                {item.type === "TEXT" && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => copyToClipboard(item.content!)}
+                    className="absolute top-2 right-2 h-8 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+                    title="复制内容"
+                  >
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                )}
+                <pre className="whitespace-pre-wrap break-words text-sm pr-12">{item.content}</pre>
               </div>
-              <Button variant="outline" size="sm" className="mt-2" onClick={() => copyToClipboard(item.content!)}>
-                <Copy className="h-4 w-4 mr-2" /> 复制内容
-              </Button>
             </div>
           )}
 

@@ -142,32 +142,24 @@ export default function ShareClient({ token }: { token: string }) {
           <div className="text-xl font-semibold">共享条目</div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="text-sm text-muted-foreground">
-            {meta.expiresAt ? `有效期至：${new Date(meta.expiresAt).toLocaleString('zh-CN')}` : '无明确有效期'}
-            {typeof meta.maxDownloads === 'number' && (
-              <>
-                {' '}· 下载：{meta.downloadCount}/{meta.maxDownloads}
-              </>
-            )}
-          </div>
-
           {meta.item.type === 'TEXT' && (
             <div>
-              <div className="bg-muted p-4 rounded">
-                <pre className="whitespace-pre-wrap text-sm">{meta.item.content}</pre>
-              </div>
-              <div className="mt-3 flex items-center gap-3">
+              <div className="relative bg-muted p-4 rounded group">
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
                   onClick={async () => {
                     const ok = await safeCopyText(meta.item.content || '');
                     toast({ title: ok ? '已复制到剪贴板' : '复制失败', variant: ok ? undefined : 'destructive' });
                   }}
+                  className="absolute top-2 right-2 h-8 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+                  title="复制内容"
                 >
-                  <Copy className="h-4 w-4 mr-2" />
-                  复制文本
+                  <Copy className="h-4 w-4" />
                 </Button>
+                <pre className="whitespace-pre-wrap break-words text-sm pr-12">{meta.item.content}</pre>
+              </div>
+              <div className="mt-3">
                 <a className="underline text-sm" href={`${API_BASE}/api/share/${token}/download`}>下载为文本文件</a>
               </div>
             </div>
