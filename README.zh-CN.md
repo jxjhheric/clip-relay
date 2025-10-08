@@ -65,6 +65,16 @@ CLIPBOARD_PASSWORD="change-me"
 docker build -t clip-relay:latest -f Dockerfile .
 ```
 
+### 多架构镜像（ARM64 支持）
+- CI 会发布多架构镜像：`linux/amd64` 与 `linux/arm64`。ARM 服务器可直接 `docker pull`，Docker 会自动选择对应架构。
+- 如遇到 `exec format error`，通常是拉取了与宿主架构不匹配的镜像或镜像只包含单一架构。
+- 可通过以下命令检查某个 tag 是否为多架构清单：
+  - `docker buildx imagetools inspect <REGISTRY>/<NAMESPACE>/clip-relay:<TAG>`
+  - 或 `docker manifest inspect <REGISTRY>/<NAMESPACE>/clip-relay:<TAG>`
+- 需要强制指定平台时，可显式声明：
+  - `docker pull --platform=linux/arm64 <REGISTRY>/<NAMESPACE>/clip-relay:<TAG>`
+
+
 ### 使用 Docker Compose（推荐）
 1) 准备 `.env`：
 ```
