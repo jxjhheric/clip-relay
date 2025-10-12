@@ -50,23 +50,23 @@ RUN cargo build --manifest-path rust-server/Cargo.toml --release
 FROM alpine:3.20 AS runtime
 WORKDIR /app
 
-RUN addgroup -S app && adduser -S -G app -u 10001 appuser \
- && apk add --no-cache ca-certificates \
- && mkdir -p /app/data/uploads \
- && chown -R appuser:app /app
+RUN apk add --no-cache ca-certificates tzdata && update-ca-certificates
 
-# Copy static export
 COPY --from=frontend /app/.next-export /app/.next-export
 
-# Copy Rust server binary
 COPY --from=rust-builder /app/rust-server/target/release/clip-relay /usr/local/bin/clip-relay
 
-# Environment
+RUN chmod +x /usr/local/bin/clip-relay \
+    && mkdir -p /app/data/uploads /app/logs /app/tmp \
+    && chgrp -R 0 /app \
+    && chmod -R g=u /app \
+    && find /app -type d -exec chmod g+s {} +
+
 ENV RUST_LOG=info \
     STATIC_DIR=/app/.next-export \
-    PORT=8087
+    PORT=8087 \
+    HOME=/tmp
 
 EXPOSE 8087
-USER appuser
 
 CMD ["/usr/local/bin/clip-relay"]
