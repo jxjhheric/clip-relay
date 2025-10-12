@@ -50,7 +50,7 @@ RUN cargo build --manifest-path rust-server/Cargo.toml --release
 FROM alpine:3.20 AS runtime
 WORKDIR /app
 
-RUN apk add --no-cache ca-certificates tzdata && update-ca-certificates
+RUN apk add --no-cache ca-certificates && update-ca-certificates
 
 COPY --from=frontend /app/.next-export /app/.next-export
 
