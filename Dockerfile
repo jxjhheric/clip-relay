@@ -50,18 +50,16 @@ RUN cargo build --manifest-path rust-server/Cargo.toml --release
 FROM alpine:3.20 AS runtime
 WORKDIR /app
 
-# Create non-root user first and install runtime deps
 RUN addgroup -S app && adduser -S -G app -u 10001 appuser \
- && apk add --no-cache ca-certificates
+ && apk add --no-cache ca-certificates \
+ && mkdir -p /app/data/uploads \
+ && chown -R appuser:app /app
 
-# Copy artifacts
+# Copy static export
 COPY --from=frontend /app/.next-export /app/.next-export
-COPY --from=rust-builder /app/rust-server/target/release/clip-relay /usr/local/bin/clip-relay
 
-# Ensure data dir exists and fix ownership/exec bits deterministically
-RUN mkdir -p /app/data/uploads \
- && chown -R appuser:app /app \
- && chmod 0755 /usr/local/bin/clip-relay
+# Copy Rust server binary
+COPY --from=rust-builder /app/rust-server/target/release/clip-relay /usr/local/bin/clip-relay
 
 # Environment
 ENV RUST_LOG=info \
