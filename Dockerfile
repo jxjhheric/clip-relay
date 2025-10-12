@@ -52,15 +52,13 @@ WORKDIR /app
 
 RUN apk add --no-cache ca-certificates && update-ca-certificates
 
-COPY --from=frontend /app/.next-export /app/.next-export
+COPY --chown=0:0 --from=frontend /app/.next-export /app/.next-export
+COPY --chown=0:0 --from=rust-builder /app/rust-server/target/release/clip-relay /usr/local/bin/clip-relay
 
-COPY --from=rust-builder /app/rust-server/target/release/clip-relay /usr/local/bin/clip-relay
-
-RUN chmod +x /usr/local/bin/clip-relay \
-    && mkdir -p /app/data/uploads /app/logs /app/tmp \
-    && chgrp -R 0 /app \
-    && chmod -R g=u /app \
-    && find /app -type d -exec chmod g+s {} +
+RUN chmod a+rx /usr/local/bin/clip-relay \
+ && mkdir -p /app/data /app/data/uploads /app/logs /app/tmp \
+ && chgrp -R 0 /app/data /app/logs /app/tmp \
+ && chmod -R 2775 /app/data /app/logs /app/tmp
 
 ENV RUST_LOG=info \
     STATIC_DIR=/app/.next-export \
@@ -69,4 +67,4 @@ ENV RUST_LOG=info \
 
 EXPOSE 8087
 
-CMD ["/usr/local/bin/clip-relay"]
+CMD ["/bin/sh","-c","umask 0002 && exec /usr/local/bin/clip-relay"]
