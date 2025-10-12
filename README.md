@@ -75,15 +75,6 @@ docker pull $REGISTRY/$NAMESPACE/clip-relay:latest
 docker pull $REGISTRY/$NAMESPACE/clip-relay:sha-$GITHUB_SHA
 ```
 
-### Multi-arch images (ARM64 supported)
-- CI publishes multi-platform images: `linux/amd64` and `linux/arm64`. On ARM hosts, a plain `docker pull` will fetch the right variant automatically.
-- If you see `exec format error`, you likely pulled a single-arch image or one that doesn’t match your host.
-- Inspect a tag’s manifest list:
-  - `docker buildx imagetools inspect $REGISTRY/$NAMESPACE/clip-relay:<TAG>`
-  - or `docker manifest inspect $REGISTRY/$NAMESPACE/clip-relay:<TAG>`
-- To force a specific platform:
-  - `docker pull --platform=linux/arm64 $REGISTRY/$NAMESPACE/clip-relay:<TAG>`
-
 ### Run with Docker Compose (recommended)
 Create `.env` with at least:
 ```
