@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Clip Relay Extension",
+  "version": "1.0.0",
+  "description": "Send selected text or links to Clip Relay server and get QR code",
+  "permissions": [
+    "contextMenus",
+    "storage",
+    "activeTab",
+    "notifications"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Clip Relay"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

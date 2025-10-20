@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Clip Relay</title>
+  <style>
+    body {
+      width: 500px;
+      height: 600px;
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+      overflow: hidden;
+    }
+    
+    .container {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+    
+    .header {
+      padding: 10px;
+      background-color: #f5f5f5;
+      border-bottom: 1px solid #ddd;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .header h3 {
+      margin: 0;
+      font-size: 16px;
+    }
+    
+    .config-toggle {
+      background: none;
+      border: none;
+      font-size: 16px;
+      cursor: pointer;
+      color: #4f46e5;
+    }
+    
+    .server-iframe {
+      flex: 1;
+      border: none;
+      width: 100%;
+    }
+    
+    .config-panel {
+      padding: 15px;
+      background-color: #f9f9f9;
+      border-top: 1px solid #ddd;
+    }
+    
+    .input-group {
+      margin: 10px 0;
+      text-align: left;
+    }
+    
+    .input-group label {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 12px;
+      color: #374151;
+    }
+    
+    .input-group input {
+      width: 100%;
+      padding: 6px;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+    
+    .btn {
+      background-color: #4f46e5;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin: 5px;
+      font-size: 14px;
+    }
+    
+    .btn:hover {
+      background-color: #4338ca;
+    }
+    
+    .status {
+      margin: 10px 0;
+      padding: 8px;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    
+    .success {
+      background-color: #d1fae5;
+      color: #065f46;
+      border: 1px solid #a7f3d0;
+    }
+    
+    .error {
+      background-color: #fee2e2;
+      color: #b91c1c;
+      border: 1px solid #fecaca;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h3>Clip Relay</h3>
+      <button class="config-toggle" id="config-toggle">⚙️</button>
+    </div>
+    
+    <iframe id="server-iframe" class="server-iframe" src="about:blank"></iframe>
+    
+    <div class="config-panel" id="config-panel" style="display: none;">
+      <h4>服务器配置</h4>
+      <div class="input-group">
+        <label for="server-url">服务器地址:</label>
+        <input type="url" id="server-url" placeholder="http://localhost:8087">
+      </div>
+      <div class="input-group">
+        <label for="server-password">访问密码:</label>
+        <input type="password" id="server-password" placeholder="输入密码">
+      </div>
+      <button class="btn" id="save-config">保存配置</button>
+      <div id="config-status" class="status" style="display: none;"></div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
