@@ -33,20 +33,98 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     content = info.selectionText;
     type = 'TEXT';
     contentPreview = content.length > 100 ? content.substring(0, 100) + '...' : content;
+    await sendToClipRelay(content, type, contentPreview);
   } else if (info.menuItemId === 'sendLinkToClipRelay' && info.linkUrl) {
     content = info.linkUrl;
     type = 'TEXT';
     contentPreview = content;
-  } else if (info.menuItemId === 'sendImageToClipRelay' && info.srcUrl) {
-    content = info.srcUrl;
-    type = 'TEXT';
-    contentPreview = 'Image URL: ' + content;
-  }
-
-  if (content) {
     await sendToClipRelay(content, type, contentPreview);
+  } else if (info.menuItemId === 'sendImageToClipRelay' && info.srcUrl) {
+    // Download image and send as file
+    await sendImageToClipRelay(info.srcUrl);
   }
 });
+
+// Send image to Clip Relay as file
+async function sendImageToClipRelay(imageUrl) {
+  try {
+    // Get settings
+    const settings = await chrome.storage.sync.get(['serverUrl', 'password', 'showNotifications']);
+
+    if (!settings.serverUrl || !settings.password) {
+      showNotification('Configuration Error', 'Please configure server URL and password in extension settings', 'error');
+      return;
+    }
+
+    // Show downloading notification
+    if (settings.showNotifications !== false) {
+      showNotification('Downloading Image', 'Fetching image from URL...', 'success');
+    }
+
+    // Download the image
+    const response = await fetch(imageUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to download image: ${response.status}`);
+    }
+
+    const blob = await response.blob();
+
+    // Extract filename from URL or use default
+    let filename = 'image';
+    try {
+      const urlPath = new URL(imageUrl).pathname;
+      const urlFilename = urlPath.split('/').pop();
+      if (urlFilename && urlFilename.includes('.')) {
+        filename = urlFilename;
+      } else {
+        // Use blob type to determine extension
+        const extension = blob.type.split('/')[1] || 'png';
+        filename = `image.${extension}`;
+      }
+    } catch (e) {
+      // Use blob type to determine extension
+      const extension = blob.type.split('/')[1] || 'png';
+      filename = `image.${extension}`;
+    }
+
+    // Create File object from Blob
+    const file = new File([blob], filename, { type: blob.type });
+
+    // Create API client
+    const api = new ClipRelayAPI(settings.serverUrl, settings.password);
+
+    // Send to server as FILE type
+    const item = await api.createClipboardItem(file, 'FILE');
+
+    // Show success notification
+    if (settings.showNotifications !== false) {
+      showNotification(
+        'Sent to Clip Relay',
+        `Image file: ${filename}`,
+        'success'
+      );
+    }
+
+    // Auto-open popup to show the result
+    try {
+      await chrome.action.openPopup();
+    } catch (error) {
+      // openPopup() may fail in some contexts, that's okay
+      console.log('Could not auto-open popup:', error.message);
+    }
+
+    // Notify popup to refresh (if open)
+    setTimeout(() => {
+      chrome.runtime.sendMessage({ action: 'refresh' }).catch(() => {
+        // Popup might not be open yet, ignore error
+      });
+    }, 500);
+
+  } catch (error) {
+    console.error('Error sending image to Clip Relay:', error);
+    showNotification('Send Failed', error.message, 'error');
+  }
+}
 
 // Send content to Clip Relay
 async function sendToClipRelay(content, type, contentPreview) {

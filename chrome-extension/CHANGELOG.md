@@ -5,11 +5,16 @@ All notable changes to the Clip Relay Chrome Extension will be documented in thi
 ## [1.0.5] - 2025-01-04
 
 ### Added
+- **Image File Upload**: Right-click images now sends actual image files instead of just URLs
+- Auto-download images from web pages and upload as FILE type
+- Automatic filename extraction from image URL
 - Auto-close popup after 5 seconds when content is sent successfully
 - Mouse hover detection to pause auto-close timer
 - Popup stays open when mouse is over it
+- Downloading notification when fetching images
 
 ### Changed
+- "Send image to Clip Relay" now uploads image files instead of image URLs
 - Removed "Content sent successfully!" notification display
 - Improved popup loading logic with better error handling
 - Increased background script delay from 200ms to 500ms for better popup initialization

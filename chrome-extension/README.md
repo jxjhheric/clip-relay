@@ -5,6 +5,7 @@ A Chrome extension that allows you to send selected text, links, and images dire
 ## Features
 
 - **Context Menu Integration**: Right-click to send selected text, links, or images to Clip Relay
+- **Image File Upload**: Automatically downloads and uploads images as files (not just URLs)
 - **Backend Web Interface**: Full Clip Relay web interface embedded in popup (400x600)
 - **Auto-Open Popup**: Popup automatically opens after sending content
 - **Smart Auto-Close**: Popup closes after 5 seconds, pauses when mouse hovers
@@ -57,6 +58,7 @@ A Chrome extension that allows you to send selected text, links, and images dire
 3. **Send Images**
    - Right-click on any image
    - Choose "Send image to Clip Relay"
+   - The extension will download and upload the image file (not just the URL)
 
 ### Using the Backend Interface
 
@@ -256,6 +258,7 @@ For issues, questions, or feature requests:
 See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 
 ### Version 1.0.5 (Current)
+- **Added**: Image file upload - sends actual image files instead of URLs
 - **Added**: Auto-close popup after 5 seconds when content is sent
 - **Added**: Mouse hover detection to pause auto-close timer
 - **Improved**: Better popup loading logic with error handling
