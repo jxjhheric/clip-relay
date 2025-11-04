@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clip Relay</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Settings View (First Time Setup) -->
+    <div id="settingsView" class="view">
+      <div class="settings-header">
+        <h1>Clip Relay Setup</h1>
+        <p>Configure your server to get started</p>
+      </div>
+
+      <form id="settingsForm">
+        <div class="form-group">
+          <label for="serverUrl">Server URL</label>
+          <input
+            type="url"
+            id="serverUrl"
+            placeholder="http://localhost:8087"
+            required
+          >
+          <small>Example: http://localhost:8087 or https://clip.example.com</small>
+        </div>
+
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input
+            type="password"
+            id="password"
+            placeholder="Enter your server password"
+            required
+          >
+          <small>The password configured in CLIPBOARD_PASSWORD</small>
+        </div>
+
+        <div class="form-group checkbox-group">
+          <label>
+            <input type="checkbox" id="showNotifications" checked>
+            <span>Show notifications when sending content</span>
+          </label>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Save & Continue</button>
+      </form>
+
+      <div id="status" class="status hidden"></div>
+    </div>
+
+    <!-- Web Interface View (Main View) -->
+    <div id="webView" class="view hidden">
+      <div class="web-header">
+        <h1>Clip Relay</h1>
+        <button id="settingsBtn" class="icon-btn" title="Settings">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M12 1v6m0 6v6m5.2-13.2l-4.2 4.2m0 6l4.2 4.2M23 12h-6m-6 0H1m18.2 5.2l-4.2-4.2m0-6l4.2-4.2"></path>
+          </svg>
+        </button>
+      </div>
+
+      <div id="loadingState" class="loading-state">
+        <div class="spinner"></div>
+        <p>Loading...</p>
+      </div>
+
+      <iframe id="webFrame" class="web-frame hidden"></iframe>
+
+      <div id="errorState" class="error-state hidden">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <h3>Unable to Load</h3>
+        <p id="errorMessage">Failed to connect to server</p>
+        <button id="retryBtn" class="btn btn-secondary">Retry</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="sendNotification" class="send-notification hidden">
+    <div class="notification-content">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+      </svg>
+      <span id="sendNotificationText">Sent successfully!</span>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

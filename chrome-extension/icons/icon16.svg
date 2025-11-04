@@ -1,0 +1,27 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="128" height="128" rx="24" fill="#1a73e8"/>
+
+  <!-- Clipboard icon -->
+  <g transform="translate(32, 24)">
+    <!-- Clipboard board -->
+    <rect x="8" y="12" width="48" height="64" rx="4" fill="white" opacity="0.95"/>
+
+    <!-- Clipboard clip -->
+    <rect x="20" y="4" width="24" height="12" rx="2" fill="white" opacity="0.95"/>
+    <rect x="22" y="6" width="20" height="8" rx="2" fill="#1a73e8"/>
+
+    <!-- Lines representing text -->
+    <rect x="16" y="28" width="32" height="3" rx="1.5" fill="#1a73e8" opacity="0.6"/>
+    <rect x="16" y="38" width="28" height="3" rx="1.5" fill="#1a73e8" opacity="0.6"/>
+    <rect x="16" y="48" width="32" height="3" rx="1.5" fill="#1a73e8" opacity="0.6"/>
+    <rect x="16" y="58" width="24" height="3" rx="1.5" fill="#1a73e8" opacity="0.6"/>
+  </g>
+
+  <!-- Sync/relay arrows -->
+  <g transform="translate(88, 88)">
+    <circle cx="0" cy="0" r="20" fill="#4CAF50"/>
+    <path d="M -8 -4 L -2 -4 L -2 -8 L 4 -2 L -2 4 L -2 0 L -8 0 Z" fill="white"/>
+    <path d="M 8 4 L 2 4 L 2 8 L -4 2 L 2 -4 L 2 0 L 8 0 Z" fill="white"/>
+  </g>
+</svg>

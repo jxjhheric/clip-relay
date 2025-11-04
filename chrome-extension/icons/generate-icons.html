@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Icon Generator</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    .icon-preview {
+      display: flex;
+      gap: 20px;
+      margin: 20px 0;
+      flex-wrap: wrap;
+    }
+    .icon-item {
+      text-align: center;
+    }
+    canvas {
+      border: 1px solid #ddd;
+      margin: 10px 0;
+    }
+    button {
+      background: #1a73e8;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin: 5px;
+    }
+    button:hover {
+      background: #1557b0;
+    }
+  </style>
+</head>
+<body>
+  <h1>Clip Relay Icon Generator</h1>
+  <p>Click the buttons below to download the icon in different sizes.</p>
+
+  <div class="icon-preview">
+    <div class="icon-item">
+      <h3>16x16</h3>
+      <canvas id="canvas16" width="16" height="16"></canvas>
+      <br>
+      <button onclick="downloadIcon(16)">Download</button>
+    </div>
+    <div class="icon-item">
+      <h3>32x32</h3>
+      <canvas id="canvas32" width="32" height="32"></canvas>
+      <br>
+      <button onclick="downloadIcon(32)">Download</button>
+    </div>
+    <div class="icon-item">
+      <h3>48x48</h3>
+      <canvas id="canvas48" width="48" height="48"></canvas>
+      <br>
+      <button onclick="downloadIcon(48)">Download</button>
+    </div>
+    <div class="icon-item">
+      <h3>128x128</h3>
+      <canvas id="canvas128" width="128" height="128"></canvas>
+      <br>
+      <button onclick="downloadIcon(128)">Download</button>
+    </div>
+  </div>
+
+  <button onclick="downloadAll()">Download All Icons</button>
+
+  <script>
+    const sizes = [16, 32, 48, 128];
+
+    function drawIcon(canvas, size) {
+      const ctx = canvas.getContext('2d');
+      const scale = size / 128;
+
+      // Clear canvas
+      ctx.clearRect(0, 0, size, size);
+
+      // Background with rounded corners
+      ctx.fillStyle = '#1a73e8';
+      roundRect(ctx, 0, 0, size, size, 24 * scale);
+      ctx.fill();
+
+      // Clipboard
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+      roundRect(ctx, 40 * scale, 36 * scale, 48 * scale, 64 * scale, 4 * scale);
+      ctx.fill();
+
+      // Clipboard clip
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+      roundRect(ctx, 52 * scale, 28 * scale, 24 * scale, 12 * scale, 2 * scale);
+      ctx.fill();
+
+      ctx.fillStyle = '#1a73e8';
+      roundRect(ctx, 54 * scale, 30 * scale, 20 * scale, 8 * scale, 2 * scale);
+      ctx.fill();
+
+      // Text lines
+      ctx.fillStyle = 'rgba(26, 115, 232, 0.6)';
+      roundRect(ctx, 48 * scale, 52 * scale, 32 * scale, 3 * scale, 1.5 * scale);
+      ctx.fill();
+      roundRect(ctx, 48 * scale, 62 * scale, 28 * scale, 3 * scale, 1.5 * scale);
+      ctx.fill();
+      roundRect(ctx, 48 * scale, 72 * scale, 32 * scale, 3 * scale, 1.5 * scale);
+      ctx.fill();
+      roundRect(ctx, 48 * scale, 82 * scale, 24 * scale, 3 * scale, 1.5 * scale);
+      ctx.fill();
+
+      // Sync circle
+      ctx.fillStyle = '#4CAF50';
+      ctx.beginPath();
+      ctx.arc(108 * scale, 108 * scale, 20 * scale, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Sync arrows
+      ctx.fillStyle = 'white';
+      ctx.save();
+      ctx.translate(108 * scale, 108 * scale);
+
+      // Top arrow
+      ctx.beginPath();
+      ctx.moveTo(-8 * scale, -4 * scale);
+      ctx.lineTo(-2 * scale, -4 * scale);
+      ctx.lineTo(-2 * scale, -8 * scale);
+      ctx.lineTo(4 * scale, -2 * scale);
+      ctx.lineTo(-2 * scale, 4 * scale);
+      ctx.lineTo(-2 * scale, 0);
+      ctx.lineTo(-8 * scale, 0);
+      ctx.closePath();
+      ctx.fill();
+
+      // Bottom arrow
+      ctx.beginPath();
+      ctx.moveTo(8 * scale, 4 * scale);
+      ctx.lineTo(2 * scale, 4 * scale);
+      ctx.lineTo(2 * scale, 8 * scale);
+      ctx.lineTo(-4 * scale, 2 * scale);
+      ctx.lineTo(2 * scale, -4 * scale);
+      ctx.lineTo(2 * scale, 0);
+      ctx.lineTo(8 * scale, 0);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    function roundRect(ctx, x, y, width, height, radius) {
+      ctx.beginPath();
+      ctx.moveTo(x + radius, y);
+      ctx.lineTo(x + width - radius, y);
+      ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+      ctx.lineTo(x + width, y + height - radius);
+      ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+      ctx.lineTo(x + radius, y + height);
+      ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+      ctx.lineTo(x, y + radius);
+      ctx.quadraticCurveTo(x, y, x + radius, y);
+      ctx.closePath();
+    }
+
+    function downloadIcon(size) {
+      const canvas = document.getElementById(`canvas${size}`);
+      const link = document.createElement('a');
+      link.download = `icon${size}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    }
+
+    function downloadAll() {
+      sizes.forEach(size => {
+        setTimeout(() => downloadIcon(size), size * 10);
+      });
+    }
+
+    // Draw all icons on load
+    window.onload = () => {
+      sizes.forEach(size => {
+        const canvas = document.getElementById(`canvas${size}`);
+        drawIcon(canvas, size);
+      });
+    };
+  </script>
+</body>
+</html>
