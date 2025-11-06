@@ -69,27 +69,32 @@ async function sendImageToClipRelay(imageUrl, pageTitle) {
 
     const blob = await response.blob();
 
-    // Generate filename using page title
+    // Generate filename using page title with timestamp for uniqueness
     let filename = 'image';
     try {
       // Clean up page title for filename (remove invalid characters)
       const cleanTitle = pageTitle
         .replace(/[<>:"/\\|?*]/g, '') // Remove invalid filename characters
         .replace(/\s+/g, '_') // Replace spaces with underscores
-        .substring(0, 50); // Limit length to avoid issues
+        .substring(0, 40); // Limit length to make room for timestamp
 
       // Use blob type to determine extension
       const extension = blob.type.split('/')[1] || 'png';
 
+      // Add timestamp to ensure uniqueness for multiple images from same page
+      const timestamp = Date.now();
+      const randomSuffix = Math.random().toString(36).substring(2, 6); // Add random 4-char suffix
+
       if (cleanTitle && cleanTitle.trim()) {
-        filename = `${cleanTitle}.${extension}`;
+        filename = `${cleanTitle}_${timestamp}_${randomSuffix}.${extension}`;
       } else {
-        filename = `image.${extension}`;
+        filename = `image_${timestamp}_${randomSuffix}.${extension}`;
       }
     } catch (e) {
       // Use blob type to determine extension
       const extension = blob.type.split('/')[1] || 'png';
-      filename = `image.${extension}`;
+      const timestamp = Date.now();
+      filename = `image_${timestamp}.${extension}`;
     }
 
     // Create File object from Blob

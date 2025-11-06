@@ -2,6 +2,18 @@
 
 All notable changes to the Clip Relay Chrome Extension will be documented in this file.
 
+## [1.0.6] - 2025-01-06
+
+### Changed
+- **Image Naming Strategy**: Images uploaded from web pages now use the page title as the filename instead of the original image filename
+- Enhanced filename generation with timestamp and random suffix to ensure uniqueness when uploading multiple images from the same page
+- Improved filename sanitization by removing invalid characters and replacing spaces with underscores
+- Reduced page title length limit from 50 to 40 characters to accommodate timestamp and suffix
+
+### Fixed
+- Multiple images uploaded from the same page now have unique filenames to prevent file overwrites
+- Filenames are properly sanitized for filesystem compatibility
+
 ## [1.0.5] - 2025-01-04
 
 ### Added
@@ -124,6 +136,7 @@ All notable changes to the Clip Relay Chrome Extension will be documented in thi
 
 ## Version History Summary
 
+- **v1.0.6**: Image naming using page title with unique timestamp suffix
 - **v1.0.5**: Auto-close popup with hover detection
 - **v1.0.4**: Major simplification - iframe backend integration
 - **v1.0.3**: History-first interface redesign
@@ -139,6 +152,12 @@ All versions require:
 - Server password for authentication
 
 ## Migration Notes
+
+### Upgrading to v1.0.6
+- All settings preserved
+- No data migration needed
+- Image naming behavior changed to use page titles instead of original filenames
+- Simply reload the extension
 
 ### Upgrading to v1.0.5
 - All settings preserved
