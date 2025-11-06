@@ -41,12 +41,12 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     await sendToClipRelay(content, type, contentPreview);
   } else if (info.menuItemId === 'sendImageToClipRelay' && info.srcUrl) {
     // Download image and send as file
-    await sendImageToClipRelay(info.srcUrl);
+    await sendImageToClipRelay(info.srcUrl, tab.title);
   }
 });
 
 // Send image to Clip Relay as file
-async function sendImageToClipRelay(imageUrl) {
+async function sendImageToClipRelay(imageUrl, pageTitle) {
   try {
     // Get settings
     const settings = await chrome.storage.sync.get(['serverUrl', 'password', 'showNotifications']);
@@ -69,16 +69,21 @@ async function sendImageToClipRelay(imageUrl) {
 
     const blob = await response.blob();
 
-    // Extract filename from URL or use default
+    // Generate filename using page title
     let filename = 'image';
     try {
-      const urlPath = new URL(imageUrl).pathname;
-      const urlFilename = urlPath.split('/').pop();
-      if (urlFilename && urlFilename.includes('.')) {
-        filename = urlFilename;
+      // Clean up page title for filename (remove invalid characters)
+      const cleanTitle = pageTitle
+        .replace(/[<>:"/\\|?*]/g, '') // Remove invalid filename characters
+        .replace(/\s+/g, '_') // Replace spaces with underscores
+        .substring(0, 50); // Limit length to avoid issues
+
+      // Use blob type to determine extension
+      const extension = blob.type.split('/')[1] || 'png';
+
+      if (cleanTitle && cleanTitle.trim()) {
+        filename = `${cleanTitle}.${extension}`;
       } else {
-        // Use blob type to determine extension
-        const extension = blob.type.split('/')[1] || 'png';
         filename = `image.${extension}`;
       }
     } catch (e) {
