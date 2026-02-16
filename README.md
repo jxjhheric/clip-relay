@@ -52,18 +52,15 @@ CLIPBOARD_PASSWORD="change-me"
 # STATIC_DIR="/app/.next-export"   # where static UI is served from
 # PORT=8087                         # server listen port
 # AUTH_MAX_AGE_SECONDS=604800       # auth cookie max-age in seconds (default: 7 days)
-# Storage overrides (for platforms with read-only rootfs, mount a volume or point these to a writable path)
-# DATA_DIR="/app/data"              # directory containing SQLite + uploads (default: ./data)
-# DB_PATH="/app/data/custom.db"     # exact SQLite file path (overrides DATA_DIR)
-# DATABASE_URL="file:/app/data/custom.db"  # alias for DB_PATH (supports file:/... and sqlite:/...)
+# DATA_DIR="/app/data"              # directory containing SQLite + uploads (default: auto-detect)
 # HEALTH_VERBOSE=1                   # include dataDir/dbPath in /api/healthz
 ```
 - `CLIPBOARD_PASSWORD` controls access to the UI.
 - `STATIC_DIR` is optional; by default the server tries `.next-export/`, `out/`, or `../.next-export`.
 - `AUTH_MAX_AGE_SECONDS` controls cookie lifetime. Defaults to 7 days; tune longer/shorter as needed.
-- The SQLite database lives under `./data/custom.db` (auto-created). Ensure the mounted volume is writable by the container user.
-  - If the default `./data` (or `/app/data` in the Docker image) is not writable (common on some PaaS/Kubernetes setups with read-only root filesystem), the server will try `/data`.
-  - If neither is writable, the server fails fast on startup; set `DATA_DIR`/`DB_PATH` to point at a writable mounted volume.
+- The SQLite database lives under `data/custom.db` (auto-created). Docker images set `DATA_DIR=/app/data` by default.
+  - For non-Docker local development, the server auto-detects the data directory (usually `./data` relative to the project root).
+  - If the auto-detected directory is not writable, the server fails fast on startup; set `DATA_DIR` to point at a writable path.
 
 ## Docker
 The provided `Dockerfile` builds a slim Rust runtime image including the static Next export. First-time empty volumes are auto-initialized by the server.

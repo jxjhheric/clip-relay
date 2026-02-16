@@ -960,34 +960,7 @@ struct ClipboardItem {
 }
 
 fn resolve_storage_paths() -> anyhow::Result<(PathBuf, PathBuf, String)> {
-    // Explicit configuration (fail-fast if invalid/unwritable)
-    if let Ok(db_path) = env::var("DB_PATH") {
-        let db_path = db_path.trim();
-        if !db_path.is_empty() {
-            let db_path = PathBuf::from(db_path);
-            let data_dir = db_path
-                .parent()
-                .map(PathBuf::from)
-                .ok_or_else(|| anyhow::anyhow!("DB_PATH must include a parent directory"))?;
-            ensure_writable_storage(&data_dir, Some(&db_path), Some("DB_PATH"))?;
-            return Ok((data_dir, db_path, "explicit:DB_PATH".to_string()));
-        }
-    }
-
-    if let Ok(database_url) = env::var("DATABASE_URL") {
-        let database_url = database_url.trim();
-        if !database_url.is_empty() {
-            let db_path = parse_db_path_from_database_url(database_url)
-                .unwrap_or_else(|| PathBuf::from(database_url));
-            let data_dir = db_path
-                .parent()
-                .map(PathBuf::from)
-                .ok_or_else(|| anyhow::anyhow!("DATABASE_URL must point to a file path"))?;
-            ensure_writable_storage(&data_dir, Some(&db_path), Some("DATABASE_URL"))?;
-            return Ok((data_dir, db_path, "explicit:DATABASE_URL".to_string()));
-        }
-    }
-
+    // Optional override via DATA_DIR (set in Dockerfile for container deployments)
     if let Ok(data_dir) = env::var("DATA_DIR") {
         let data_dir = data_dir.trim();
         if !data_dir.is_empty() {
@@ -1045,17 +1018,7 @@ fn default_data_dir() -> anyhow::Result<PathBuf> {
     Ok(base.join("data"))
 }
 
-fn parse_db_path_from_database_url(database_url: &str) -> Option<PathBuf> {
-    let s = database_url.trim();
-    let path = s
-        .strip_prefix("file:")
-        .or_else(|| s.strip_prefix("sqlite:"))?;
-    if path.is_empty() {
-        None
-    } else {
-        Some(PathBuf::from(path))
-    }
-}
+
 
 fn ensure_writable_storage(
     data_dir: &StdPath,

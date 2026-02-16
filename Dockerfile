@@ -66,6 +66,7 @@ RUN chmod a+rx /usr/local/bin/clip-relay /usr/local/bin/litestream \
 
 ENV RUST_LOG=info \
     STATIC_DIR=/app/.next-export \
+    DATA_DIR=/app/data \
     PORT=8087 \
     HOME=/tmp
 

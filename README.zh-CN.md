@@ -54,18 +54,15 @@ CLIPBOARD_PASSWORD="change-me"
 # STATIC_DIR="/app/.next-export"   # 静态前端目录
 # PORT=8087                         # 监听端口
 # AUTH_MAX_AGE_SECONDS=604800       # 认证 Cookie 有效期（秒），默认 7 天
-# 存储相关（如果平台启用只读 rootfs，请挂载可写卷或将这些变量指向可写路径）
-# DATA_DIR="/app/data"              # SQLite + uploads 所在目录（默认：./data）
-# DB_PATH="/app/data/custom.db"     # SQLite 文件的完整路径（优先级高于 DATA_DIR）
-# DATABASE_URL="file:/app/data/custom.db"  # DB_PATH 的别名（支持 file:/... 与 sqlite:/...）
+# DATA_DIR="/app/data"              # SQLite + uploads 所在目录（默认：自动检测）
 # HEALTH_VERBOSE=1                   # 在 /api/healthz 返回 dataDir/dbPath（便于排查）
 ```
 - `CLIPBOARD_PASSWORD` 为访问口令。
 - `STATIC_DIR` 可选；默认会自动探测 `.next-export/`、`out/` 等目录。
 - `AUTH_MAX_AGE_SECONDS` 控制登录 Cookie 的有效期（秒）。默认 7 天，设置更短/更长可按需调整。
-- SQLite 位于 `./data/custom.db`（首次启动自动创建）。请确保挂载卷对容器用户可写。
-  - 如果默认目录（本地为 `./data`，Docker 镜像内通常为 `/app/data`）不可写（一些 PaaS/Kubernetes 默认只读 rootfs 会出现），服务会尝试 `/data`。
-  - 若两者都不可写，服务会在启动阶段直接报错退出；请通过挂载可写卷并设置 `DATA_DIR`/`DB_PATH` 来明确数据位置。
+- SQLite 位于 `data/custom.db`（首次启动自动创建）。Docker 镜像默认设置 `DATA_DIR=/app/data`。
+  - 非 Docker 本地开发时，服务会自动检测数据目录（通常为项目根目录下的 `./data`）。
+  - 若自动检测的目录不可写，服务会在启动阶段直接报错退出；请设置 `DATA_DIR` 指向可写路径。
 
 ### 本地构建镜像
 ```bash
