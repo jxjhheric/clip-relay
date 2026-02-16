@@ -74,6 +74,6 @@ VOLUME ["/app/data"]
 
 EXPOSE 8087
 
-# Use litestream to replicate and run the application
-# It will automatically restore if the database is missing and then keep it in sync
-CMD ["/bin/sh","-c","umask 0002 && exec litestream replicate -exec /usr/local/bin/clip-relay"]
+# If S3 is configured, use Litestream to restore (only if DB does not exist) and then keep it replicated.
+# Otherwise, run the application with local-only storage.
+CMD ["/bin/sh","-c","umask 0002 && if [ -n \"${S3_ENDPOINT:-}\" ] && [ -n \"${S3_BUCKET:-}\" ]; then litestream restore -config /etc/litestream.yml -if-db-not-exists -if-replica-exists /app/data/custom.db && exec litestream replicate -config /etc/litestream.yml -exec /usr/local/bin/clip-relay; else exec /usr/local/bin/clip-relay; fi"]

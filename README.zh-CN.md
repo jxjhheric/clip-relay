@@ -95,6 +95,15 @@ services:
 - 大文件：`data/uploads/`（启动时自动创建，API 流式读取）
 - 备份/迁移时请同时备份上述两处。
 
+### 可选：启用 S3（Litestream + uploads）
+当配置了 `S3_*` 环境变量时：
+- 数据库由 Litestream 实时复制到 S3（对象前缀：`database/main/`，见 `litestream.yml`）。
+- 大文件由应用直接上传到 S3（对象前缀：`uploads/`）。
+
+在新环境部署时：
+- 若本地数据库文件不存在，容器启动阶段会尝试从 S3 的 Litestream 副本恢复数据库。
+- 运行中也可以在 UI 的「设置」里点击「从云端同步数据库」强制恢复（会覆盖本地数据库）。
+
 ## 使用提示与常见问题
 - 复制按钮与 HTTP 环境
   - 浏览器的剪贴板 API 需要“安全上下文”（HTTPS 或 localhost）。在 HTTP 环境下，系统复制可能受限。
