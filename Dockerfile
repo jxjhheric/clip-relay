@@ -46,12 +46,19 @@ RUN cargo build --manifest-path rust-server/Cargo.toml --release
 FROM alpine:3.20 AS runtime
 WORKDIR /app
 
+# Install ca-certificates and litestream
 RUN apk add --no-cache ca-certificates && update-ca-certificates
+ADD https://github.com/benbjohnson/litestream/releases/download/v0.3.13/litestream-v0.3.13-linux-amd64.tar.gz /tmp/litestream.tar.gz
+RUN tar -C /usr/local/bin -xzf /tmp/litestream.tar.gz \
+ && rm /tmp/litestream.tar.gz
 
 COPY --chown=0:0 --from=frontend /app/.next-export /app/.next-export
 COPY --chown=0:0 --from=rust-builder /app/rust-server/target/release/clip-relay /usr/local/bin/clip-relay
 
-RUN chmod a+rx /usr/local/bin/clip-relay \
+# Copy litestream config
+COPY litestream.yml /etc/litestream.yml
+
+RUN chmod a+rx /usr/local/bin/clip-relay /usr/local/bin/litestream \
  && mkdir -p /app/data /app/data/uploads /app/logs /app/tmp \
  && chgrp -R 0 /app/data /app/logs /app/tmp \
  && chmod -R 0777 /app/data /app/logs \
@@ -66,4 +73,6 @@ VOLUME ["/app/data"]
 
 EXPOSE 8087
 
-CMD ["/bin/sh","-c","umask 0002 && exec /usr/local/bin/clip-relay"]
+# Use litestream to replicate and run the application
+# It will automatically restore if the database is missing and then keep it in sync
+CMD ["/bin/sh","-c","umask 0002 && exec litestream replicate -exec /usr/local/bin/clip-relay"]
