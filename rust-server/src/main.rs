@@ -1,4 +1,3 @@
-use anyhow;
 use std::{env, net::SocketAddr, time::Duration};
 
 use axum::body::Body;
@@ -27,7 +26,7 @@ use std::path::{Path as StdPath, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
 use time::OffsetDateTime;
-use tokio::io::AsyncWriteExt;
+
 use tokio::{net::TcpListener, sync::broadcast, time as tokio_time};
 use tokio_util::io::ReaderStream;
 use tower_http::{
@@ -1719,38 +1718,40 @@ async fn sync_from_cloud(
 ) -> impl IntoResponse {
     let now = OffsetDateTime::now_utc().unix_timestamp();
     let db_path = state.db_path.clone();
-    
-    // We try to fetch "custom.db" from cloud. 
-    // Note: This expects a standard file named "custom.db" in the bucket root.
-    match state.storage.get("custom.db").await {
-        Ok(data) => {
-            // Backup local with timestamp
-            let bak_path = db_path.with_extension(format!("{}.bak", now));
-            if let Err(e) = tokio::fs::copy(&db_path, &bak_path).await {
-                return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "backup failed", "detail": e.to_string()}))).into_response();
-            }
-            
-            // Critical section: replace and reopen
-            {
-                let mut db_conn = state.db.lock().expect("Failed to lock DB");
-                if let Err(e) = tokio::fs::write(&db_path, data).await {
-                    return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "write failed", "detail": e.to_string()}))).into_response();
-                }
-                match Connection::open(&db_path) {
-                    Ok(new_conn) => {
-                        *db_conn = new_conn;
-                    }
-                    Err(e) => {
-                        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "reopen failed", "detail": e.to_string()}))).into_response();
-                    }
-                }
-            }
-            Json(serde_json::json!({"success": true, "backup": bak_path.display().to_string()})).into_response()
-        }
+
+    // Step 1: Download from cloud (async)
+    let data = match state.storage.get("custom.db").await {
+        Ok(d) => d,
         Err(e) => {
-             (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "No backup found in cloud (ensure 'custom.db' exists in S3 bucket)", "detail": e.to_string()}))).into_response()
+            return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "No backup found in cloud (ensure 'custom.db' exists in S3 bucket)", "detail": e.to_string()}))).into_response();
+        }
+    };
+
+    // Step 2: Backup local DB (async)
+    let bak_path = db_path.with_extension(format!("{}.bak", now));
+    if let Err(e) = tokio::fs::copy(&db_path, &bak_path).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "backup failed", "detail": e.to_string()}))).into_response();
+    }
+
+    // Step 3: Write new DB file (async, before locking)
+    if let Err(e) = tokio::fs::write(&db_path, data).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "write failed", "detail": e.to_string()}))).into_response();
+    }
+
+    // Step 4: Reopen connection (sync, no .await while holding lock)
+    {
+        let mut db_conn = state.db.lock().expect("Failed to lock DB");
+        match Connection::open(&db_path) {
+            Ok(new_conn) => {
+                *db_conn = new_conn;
+            }
+            Err(e) => {
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "reopen failed", "detail": e.to_string()}))).into_response();
+            }
         }
     }
+
+    Json(serde_json::json!({"success": true, "backup": bak_path.display().to_string()})).into_response()
 }
 
 // -------------------- Share Handlers --------------------

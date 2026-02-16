@@ -27,6 +27,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 async-stream = "0.3"
 mime_guess = "2"
+qrcodegen = "1"
 aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rustls"] }
 aws-sdk-s3 = { version = "1", default-features = false, features = ["rustls"] }
 bytes = "1"
