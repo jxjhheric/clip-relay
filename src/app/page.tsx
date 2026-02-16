@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { FileText, Search, Github, Bug, Menu, LogOut } from 'lucide-react';
+import { FileText, Search, Github, Bug, Menu, LogOut, CloudDownload } from 'lucide-react';
 import { 
   AlertDialog,
   AlertDialogAction,
@@ -680,6 +680,27 @@ function SettingsDrawer({
             <a href={issuesUrl} target="_blank" rel="noopener noreferrer">
               <Bug className="h-4 w-4 mr-2" /> 提交问题
             </a>
+          </Button>
+          <Button
+            variant="ghost"
+            className="w-full justify-start"
+            onClick={async () => {
+              if (!confirm('确定要从云端同步数据库吗？这会覆盖本地现有数据并重启连接。')) return;
+              try {
+                const res = await authFetch('/api/admin/sync-from-cloud', { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) {
+                  toast({ title: '同步成功', description: '数据库已更新，正在重载...' });
+                  setTimeout(() => window.location.reload(), 1500);
+                } else {
+                  throw new Error(data.error || '同步失败');
+                }
+              } catch (e: any) {
+                toast({ title: '同步失败', description: e.message, variant: 'destructive' });
+              }
+            }}
+          >
+            <CloudDownload className="h-4 w-4 mr-2" /> 从云端同步数据库
           </Button>
           <div className="flex items-center justify-between py-2">
             <div className="text-sm">视图模式</div>

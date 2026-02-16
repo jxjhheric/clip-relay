@@ -34,6 +34,96 @@ use tower_http::{
     trace::TraceLayer,
 };
 use uuid::Uuid;
+use aws_sdk_s3::Client as S3Client;
+use aws_sdk_s3::primitives::ByteStream;
+use bytes::Bytes;
+use async_trait::async_trait;
+
+#[async_trait]
+trait Storage: Send + Sync {
+    async fn put(&self, path: &str, data: Vec<u8>) -> anyhow::Result<()>;
+    async fn get(&self, path: &str) -> anyhow::Result<Bytes>;
+    async fn delete(&self, path: &str) -> anyhow::Result<()>;
+}
+
+struct LocalStorage {
+    data_dir: PathBuf,
+}
+
+#[async_trait]
+impl Storage for LocalStorage {
+    async fn put(&self, path: &str, data: Vec<u8>) -> anyhow::Result<()> {
+        let abs = self.data_dir.join(path);
+        if let Some(parent) = abs.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::write(abs, data).await.map_err(Into::into)
+    }
+    async fn get(&self, path: &str) -> anyhow::Result<Bytes> {
+        let abs = self.data_dir.join(path);
+        let data = tokio::fs::read(abs).await?;
+        Ok(Bytes::from(data))
+    }
+    async fn delete(&self, path: &str) -> anyhow::Result<()> {
+        let abs = self.data_dir.join(path);
+        if abs.exists() {
+            tokio::fs::remove_file(abs).await.map_err(Into::into)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+struct S3Storage {
+    client: S3Client,
+    bucket: String,
+    local_fallback: Arc<LocalStorage>,
+}
+
+#[async_trait]
+impl Storage for S3Storage {
+    async fn put(&self, path: &str, data: Vec<u8>) -> anyhow::Result<()> {
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(path)
+            .body(ByteStream::from(data))
+            .send()
+            .await?;
+        Ok(())
+    }
+    async fn get(&self, path: &str) -> anyhow::Result<Bytes> {
+        // Try S3 first
+        match self.client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(path)
+            .send()
+            .await
+        {
+            Ok(output) => {
+                let data = output.body.collect().await?.into_bytes();
+                Ok(data)
+            }
+            Err(_) => {
+                // Fallback to local
+                self.local_fallback.get(path).await
+            }
+        }
+    }
+    async fn delete(&self, path: &str) -> anyhow::Result<()> {
+        let _ = self.client
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(path)
+            .send()
+            .await;
+        // Also try local
+        let _ = self.local_fallback.delete(path).await;
+        Ok(())
+    }
+}
+
 
 #[derive(Clone)]
 struct AppState {
@@ -42,6 +132,7 @@ struct AppState {
     db: Arc<Mutex<Connection>>,
     data_dir: PathBuf,
     db_path: PathBuf,
+    storage: Arc<dyn Storage>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -65,12 +156,41 @@ async fn main() -> anyhow::Result<()> {
     let (data_dir, db_path, storage_hint) = resolve_storage_paths()?;
     tracing::info!(%storage_hint, data_dir=%data_dir.display(), db_path=%db_path.display(), "Storage initialized");
     let db = init_db(&db_path)?;
+
+    // Storage initialization
+    let s3_enabled = env::var("S3_ENDPOINT").is_ok();
+    let storage: Arc<dyn Storage> = if s3_enabled {
+        let endpoint = env::var("S3_ENDPOINT").unwrap();
+        let bucket = env::var("S3_BUCKET").expect("S3_BUCKET must be set");
+        let region = env::var("S3_REGION").unwrap_or_else(|_| "auto".into());
+        
+        let config = aws_config::from_env()
+            .endpoint_url(endpoint)
+            .region(aws_sdk_s3::config::Region::new(region))
+            .load()
+            .await;
+        let client = aws_sdk_s3::Client::new(&config);
+        
+        Arc::new(S3Storage {
+            client,
+            bucket,
+            local_fallback: Arc::new(LocalStorage {
+                data_dir: data_dir.clone(),
+            }),
+        })
+    } else {
+        Arc::new(LocalStorage {
+            data_dir: data_dir.clone(),
+        })
+    };
+
     let state = AppState {
         tx,
         password,
         db: Arc::new(Mutex::new(db)),
         data_dir,
         db_path,
+        storage,
     };
 
     let protected = Router::new()
@@ -88,6 +208,7 @@ async fn main() -> anyhow::Result<()> {
             get(get_item_share).put(update_item_share),
         )
         .route("/clipboard/reorder", post(reorder_clipboard))
+        .route("/admin/sync-from-cloud", post(sync_from_cloud))
         // Files
         .route("/files/:id", get(get_file))
         // Allow large multipart bodies (up to 210MB)
@@ -1227,73 +1348,40 @@ async fn create_clipboard(
                 content_type = ctype;
 
                 let mut total: usize = 0;
-                let mut buf: Vec<u8> = Vec::new();
-                let mut fh: Option<tokio::fs::File> = None;
-                let mut rel_path: Option<String> = None;
+                let mut full_data: Vec<u8> = Vec::new();
 
                 let mut field_stream = field;
                 while let Some(chunk) = field_stream.chunk().await.unwrap_or(None) {
                     total += chunk.len();
-
-                    if fh.is_none() && total <= MAX_INLINE {
-                        buf.extend_from_slice(&chunk);
-                    } else {
-                        if fh.is_none() {
-                            // Switch to file writing: decide filename and open handle
-                            let rand_id = Uuid::new_v4().to_string();
-                            let ext = file_name
-                                .as_ref()
-                                .and_then(|n| {
-                                    std::path::Path::new(n).extension().and_then(|s| s.to_str())
-                                })
-                                .unwrap_or("");
-                            let gen = if ext.is_empty() {
-                                rand_id
-                            } else {
-                                format!("{}.{ext}", rand_id)
-                            };
-                            let abs = state.data_dir.join("uploads").join(&gen);
-                            match tokio::fs::File::create(&abs).await {
-                                Ok(mut f) => {
-                                    if !buf.is_empty() {
-                                        if let Err(_e) = f.write_all(&buf).await {
-                                            return (
-                                                StatusCode::INTERNAL_SERVER_ERROR,
-                                                Json(serde_json::json!({"error":"write failed"})),
-                                            )
-                                                .into_response();
-                                        }
-                                    }
-                                    fh = Some(f);
-                                    rel_path = Some(format!("uploads/{}", gen));
-                                }
-                                Err(_e) => {
-                                    return (
-                                        StatusCode::INTERNAL_SERVER_ERROR,
-                                        Json(serde_json::json!({"error":"open failed"})),
-                                    )
-                                        .into_response();
-                                }
-                            }
-                        }
-                        if let Some(f) = fh.as_mut() {
-                            if let Err(_e) = f.write_all(&chunk).await {
-                                return (
-                                    StatusCode::INTERNAL_SERVER_ERROR,
-                                    Json(serde_json::json!({"error":"write failed"})),
-                                )
-                                    .into_response();
-                            }
-                        }
-                    }
+                    full_data.extend_from_slice(&chunk);
                 }
 
                 file_size = Some(total as i64);
-                if let Some(rp) = rel_path {
-                    file_path_rel = Some(rp);
-                    inline_data = None;
+                if total <= MAX_INLINE {
+                    inline_data = Some(full_data);
+                    file_path_rel = None;
                 } else {
-                    inline_data = Some(buf);
+                    let rand_id = Uuid::new_v4().to_string();
+                    let ext = file_name
+                        .as_ref()
+                        .and_then(|n| {
+                            std::path::Path::new(n).extension().and_then(|s| s.to_str())
+                        })
+                        .unwrap_or("");
+                    let gen = if ext.is_empty() {
+                        rand_id
+                    } else {
+                        format!("{}.{ext}", rand_id)
+                    };
+                    let rel = format!("uploads/{}", gen);
+                    if let Err(e) = state.storage.put(&rel, full_data).await {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(serde_json::json!({"error": "upload failed", "detail": e.to_string()})),
+                        ).into_response();
+                    }
+                    file_path_rel = Some(rel);
+                    inline_data = None;
                 }
             }
             Some("shareExpiresIn") => {
@@ -1529,8 +1617,7 @@ async fn delete_clipboard(
         fp
     };
     if let Some(rel) = file_path {
-        let abs = state.data_dir.join(rel);
-        let _ = stdfs::remove_file(abs);
+        let _ = state.storage.delete(&rel).await;
     }
     let _ = state.tx.send(ServerEvent {
         name: "clipboard:deleted".into(),
@@ -1597,33 +1684,71 @@ async fn get_file(
         HeaderValue::from_static("public, max-age=31536000, immutable"),
     );
     if let Some(rel) = file_path {
-        let abs = state.data_dir.join(rel);
-        if let Ok(meta) = tokio::fs::metadata(&abs).await {
-            headers.insert(
-                axum::http::header::CONTENT_LENGTH,
-                HeaderValue::from_str(&meta.len().to_string()).unwrap(),
-            );
-        }
-        match tokio::fs::File::open(&abs).await {
-            Ok(f) => {
-                let stream = ReaderStream::new(f);
-                let body = Body::from_stream(stream);
+        match state.storage.get(&rel).await {
+            Ok(data) => {
+                headers.insert(
+                    axum::http::header::CONTENT_LENGTH,
+                    HeaderValue::from_str(&data.len().to_string()).unwrap(),
+                );
+                let body = Body::from(data);
                 (StatusCode::OK, headers, body).into_response()
             }
             Err(_) => (
                 StatusCode::NOT_FOUND,
-                Json(serde_json::json!({"error":"missing"})),
-            )
-                .into_response(),
+                Json(serde_json::json!({"error": "not found"})),
+            ).into_response()
         }
-    } else if let Some(buf) = inline {
-        (StatusCode::OK, headers, buf).into_response()
+    } else if let Some(data) = inline {
+        headers.insert(
+            axum::http::header::CONTENT_LENGTH,
+            HeaderValue::from_str(&data.len().to_string()).unwrap(),
+        );
+        let body = Body::from(data);
+        (StatusCode::OK, headers, body).into_response()
     } else {
         (
             StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error":"missing content"})),
-        )
-            .into_response()
+            Json(serde_json::json!({"error": "not found"})),
+        ).into_response()
+    }
+}
+
+async fn sync_from_cloud(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let now = OffsetDateTime::now_utc().unix_timestamp();
+    let db_path = state.db_path.clone();
+    
+    // We try to fetch "custom.db" from cloud. 
+    // Note: This expects a standard file named "custom.db" in the bucket root.
+    match state.storage.get("custom.db").await {
+        Ok(data) => {
+            // Backup local with timestamp
+            let bak_path = db_path.with_extension(format!("{}.bak", now));
+            if let Err(e) = tokio::fs::copy(&db_path, &bak_path).await {
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "backup failed", "detail": e.to_string()}))).into_response();
+            }
+            
+            // Critical section: replace and reopen
+            {
+                let mut db_conn = state.db.lock().expect("Failed to lock DB");
+                if let Err(e) = tokio::fs::write(&db_path, data).await {
+                    return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "write failed", "detail": e.to_string()}))).into_response();
+                }
+                match Connection::open(&db_path) {
+                    Ok(new_conn) => {
+                        *db_conn = new_conn;
+                    }
+                    Err(e) => {
+                        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "reopen failed", "detail": e.to_string()}))).into_response();
+                    }
+                }
+            }
+            Json(serde_json::json!({"success": true, "backup": bak_path.display().to_string()})).into_response()
+        }
+        Err(e) => {
+             (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "No backup found in cloud (ensure 'custom.db' exists in S3 bucket)", "detail": e.to_string()}))).into_response()
+        }
     }
 }
 

@@ -27,4 +27,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 async-stream = "0.3"
 mime_guess = "2"
-qrcodegen = "1"
+rust-s3 = "0.33"
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-s3 = "1"
+bytes = "1"
+async-trait = "0.1"
