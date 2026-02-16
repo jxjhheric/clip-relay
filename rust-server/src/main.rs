@@ -1137,6 +1137,7 @@ fn init_db(db_path: &StdPath) -> anyhow::Result<Connection> {
     let conn = Connection::open(db_path)?;
     conn.execute_batch(
         r"
+        PRAGMA journal_mode = WAL;
         PRAGMA foreign_keys = ON;
         CREATE TABLE IF NOT EXISTS ClipboardItem (
           id TEXT PRIMARY KEY NOT NULL,
