@@ -48,7 +48,7 @@ WORKDIR /app
 
 # Install ca-certificates and litestream
 RUN apk add --no-cache ca-certificates && update-ca-certificates
-ADD https://github.com/benbjohnson/litestream/releases/download/v0.5.8/litestream-v0.5.8-linux-amd64.tar.gz /tmp/litestream.tar.gz
+ADD https://github.com/benbjohnson/litestream/releases/download/v0.5.8/litestream-0.5.8-linux-x86_64.tar.gz /tmp/litestream.tar.gz
 RUN tar -C /usr/local/bin -xzf /tmp/litestream.tar.gz \
  && rm /tmp/litestream.tar.gz
 
