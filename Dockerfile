@@ -33,10 +33,14 @@ RUN node ./scripts/precompress.mjs /app/.next-export --write-br --no-gz
 FROM rust:1-alpine AS rust-builder
 WORKDIR /app
 
+# Install build dependencies (perl for ring, openssl-dev for aws-sdk)
+RUN apk add --no-cache musl-dev build-base pkgconf perl openssl-dev
+
 # Cache deps first
-COPY rust-server/Cargo.toml rust-server/Cargo.lock ./rust-server/
-RUN apk add --no-cache musl-dev build-base pkgconf \
- && mkdir -p rust-server/src && echo "fn main(){}" > rust-server/src/main.rs \
+COPY rust-server/Cargo.toml ./rust-server/
+# We don't copy Cargo.lock here because it might be out of sync after manual edits to Cargo.toml
+# Cargo will generate a new one during the dummy build.
+RUN mkdir -p rust-server/src && echo "fn main(){}" > rust-server/src/main.rs \
  && cargo build --manifest-path rust-server/Cargo.toml --release \
  && rm -rf rust-server/target/release/deps/clip_relay*
 
