@@ -1,12 +1,9 @@
-# Litestream configuration for real-time S3/R2 backup
+# Litestream v0.5 configuration for real-time S3/R2 backup
 dbs:
   - path: /app/data/custom.db
-    replicas:
-      - type: s3
-        bucket: "${S3_BUCKET}"
-        path: "database/main"   # 数据库备份将存放在桶内的 database/main 目录下
-        endpoint: "${S3_ENDPOINT}"
-        region: "${S3_REGION}"
-        access-key-id: "${AWS_ACCESS_KEY_ID}"
-        secret-access-key: "${AWS_SECRET_ACCESS_KEY}"
-        force-path-style: true  # 大部分兼容 S3 的服务（如 R2）建议开启
+    replica:
+      type: s3
+      bucket: "${S3_BUCKET}"
+      path: "database/main"
+      endpoint: "${S3_ENDPOINT}"
+      region: "${S3_REGION}"
