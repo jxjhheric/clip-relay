@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
 use time::OffsetDateTime;
 
-use tokio::{net::TcpListener, process::Command, sync::broadcast, time as tokio_time};
+use tokio::{net::TcpListener, sync::broadcast, time as tokio_time};
 use tokio_util::io::ReaderStream;
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -1104,7 +1104,7 @@ fn init_db(db_path: &StdPath) -> anyhow::Result<Connection> {
         -- Litestream expects to control checkpointing; disable SQLite's auto-checkpointing
         -- to avoid WAL truncation/checkpoint races under load.
         PRAGMA wal_autocheckpoint = 0;
-        -- Avoid transient "database is locked" errors when Litestream performs checkpoints.
+        -- Avoid transient database is locked errors when Litestream performs checkpoints.
         PRAGMA busy_timeout = 5000;
         PRAGMA foreign_keys = ON;
         CREATE TABLE IF NOT EXISTS ClipboardItem (
@@ -1685,12 +1685,14 @@ async fn get_file(
 async fn sync_from_cloud(
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    // This endpoint restores the SQLite database from Litestream's replica (e.g. s3://bucket/database/main)
-    // and then swaps it into place. Large files are already fetched from S3 via `state.storage` at read time.
+    // Restoring a SQLite database while Litestream is actively replicating it is unsafe:
+    // Litestream tails the WAL file and will error if the DB/WAL is swapped underneath it.
+    //
+    // Instead, we request a restart-based restore:
+    // 1) Write a marker file under DATA_DIR (persistent volume).
+    // 2) Exit the process so the supervisor restarts the container.
+    // 3) The container startup script sees the marker, restores from the replica, and then starts replication.
 
-    // Require S3 settings since the replica config expands from these env vars.
-    // (Litestream itself reads credentials from env vars such as AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
-    // or LITESTREAM_ACCESS_KEY_ID/LITESTREAM_SECRET_ACCESS_KEY.)
     if env::var("S3_ENDPOINT").is_err() || env::var("S3_BUCKET").is_err() {
         return (
             StatusCode::BAD_REQUEST,
@@ -1702,129 +1704,30 @@ async fn sync_from_cloud(
     }
 
     let now = OffsetDateTime::now_utc().unix_timestamp();
-    let db_path = state.db_path.clone();
-    let parent = db_path.parent().unwrap_or_else(|| StdPath::new("."));
-    let fname = db_path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("custom.db");
-
-    // Restore into a temp file in the same directory so we can atomically rename into place.
-    let restore_path = parent.join(format!("{fname}.restore.{now}"));
-
-    // Make sure the output path doesn't exist; Litestream refuses to overwrite the output database file.
-    let _ = tokio::fs::remove_file(&restore_path).await;
-
-    // Step 1: Restore from Litestream replica (async). Uses /etc/litestream.yml by default.
-    let output = match Command::new("litestream")
-        .arg("restore")
-        .arg("-if-replica-exists")
-        .arg("-o")
-        .arg(&restore_path)
-        .arg(&db_path)
-        .output()
-        .await
-    {
-        Ok(o) => o,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "failed to execute litestream (is it installed in this runtime image?)",
-                    "detail": e.to_string()
-                })),
-            )
-                .into_response();
-        }
-    };
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
+    let marker_path = state.data_dir.join(".restore_from_cloud");
+    if let Err(e) = tokio::fs::write(&marker_path, format!("requested_at={now}\n")).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": "litestream restore failed",
-                "status": output.status.code(),
-                "stdout": stdout.trim(),
-                "stderr": stderr.trim()
-            })),
+            Json(serde_json::json!({"error":"failed to write restore marker","detail": e.to_string()})),
         )
             .into_response();
     }
 
-    // When -if-replica-exists is used & no backups exist, Litestream exits successfully but no file is created.
-    if !restore_path.exists() {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": "no backups found in Litestream replica (nothing to restore)"
-            })),
-        )
-            .into_response();
-    }
+    // Give the HTTP response a moment to flush before we exit.
+    tokio::spawn(async {
+        tokio_time::sleep(Duration::from_millis(500)).await;
+        std::process::exit(0);
+    });
 
-    // Step 2: Swap database file + reopen connection.
-    // Do not .await while holding the DB lock; we do local fs operations synchronously here.
-    let wal_path = parent.join(format!("{fname}-wal"));
-    let shm_path = parent.join(format!("{fname}-shm"));
-    let bak_db_path = parent.join(format!("{fname}.bak.{now}"));
-    let bak_wal_path = parent.join(format!("{fname}.bak.{now}-wal"));
-    let bak_shm_path = parent.join(format!("{fname}.bak.{now}-shm"));
-
-    {
-        let mut db_conn = state.db.lock().expect("Failed to lock DB");
-
-        // Close existing connection before touching the DB files.
-        match Connection::open_in_memory() {
-            Ok(mem) => *db_conn = mem,
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error": "failed to close db connection", "detail": e.to_string()})),
-                )
-                    .into_response();
-            }
-        }
-
-        // Move current DB (and WAL/SHM) out of the way (best-effort).
-        if db_path.exists() {
-            let _ = stdfs::rename(&db_path, &bak_db_path);
-        }
-        if wal_path.exists() {
-            let _ = stdfs::rename(&wal_path, &bak_wal_path);
-        }
-        if shm_path.exists() {
-            let _ = stdfs::rename(&shm_path, &bak_shm_path);
-        }
-
-        // Move restored DB into place.
-        if let Err(e) = stdfs::rename(&restore_path, &db_path) {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "failed to replace db file", "detail": e.to_string()})),
-            )
-                .into_response();
-        }
-
-        // Reopen DB using the normal initializer so PRAGMAs/migrations are applied.
-        match init_db(&db_path) {
-            Ok(new_conn) => *db_conn = new_conn,
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error": "failed to reopen db after restore", "detail": e.to_string()})),
-                )
-                    .into_response();
-            }
-        }
-    }
-
-    Json(serde_json::json!({
-        "success": true,
-        "backup": bak_db_path.display().to_string(),
-    }))
-    .into_response()
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({
+            "success": true,
+            "restart": true,
+            "marker": marker_path.display().to_string(),
+        })),
+    )
+        .into_response()
 }
 
 // -------------------- Share Handlers --------------------

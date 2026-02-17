@@ -690,8 +690,8 @@ function SettingsDrawer({
                 const res = await authFetch('/api/admin/sync-from-cloud', { method: 'POST' });
                 const data = await res.json();
                 if (res.ok) {
-                  toast({ title: '同步成功', description: '数据库已更新，正在重载...' });
-                  setTimeout(() => window.location.reload(), 1500);
+                  toast({ title: '已触发云端恢复', description: '服务将重启并从云端恢复数据库，请稍后刷新页面…' });
+                  setTimeout(() => window.location.reload(), 3500);
                 } else {
                   throw new Error(data.error || '同步失败');
                 }

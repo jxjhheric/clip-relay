@@ -75,5 +75,6 @@ VOLUME ["/app/data"]
 EXPOSE 8087
 
 # If S3 is configured, use Litestream to restore (only if DB does not exist) and then keep it replicated.
+# If a restore marker exists (created by the UI "sync from cloud" action), force-restore by removing the local DB first.
 # Otherwise, run the application with local-only storage.
-CMD ["/bin/sh","-c","umask 0002 && if [ -n \"${S3_ENDPOINT:-}\" ] && [ -n \"${S3_BUCKET:-}\" ]; then litestream restore -config /etc/litestream.yml -if-db-not-exists -if-replica-exists /app/data/custom.db && exec litestream replicate -config /etc/litestream.yml -exec /usr/local/bin/clip-relay; else exec /usr/local/bin/clip-relay; fi"]
+CMD ["/bin/sh","-c","set -e; umask 0002; if [ -n \"${S3_ENDPOINT:-}\" ] && [ -n \"${S3_BUCKET:-}\" ]; then if [ -f /app/data/.restore_from_cloud ]; then echo \"[entrypoint] restore marker found; forcing restore\"; rm -f /app/data/custom.db /app/data/custom.db-wal /app/data/custom.db-shm; rm -rf /app/data/.custom.db-litestream; litestream restore -config /etc/litestream.yml -if-replica-exists /app/data/custom.db; rm -f /app/data/.restore_from_cloud; else litestream restore -config /etc/litestream.yml -if-db-not-exists -if-replica-exists /app/data/custom.db; fi; exec litestream replicate -config /etc/litestream.yml -exec /usr/local/bin/clip-relay; else exec /usr/local/bin/clip-relay; fi"]

@@ -69,7 +69,7 @@ When `S3_*` env vars are provided:
 
 On a fresh deployment:
 - If the local DB file is missing, the container attempts to restore it from the Litestream replica at startup.
-- You can also force a restore at runtime from the UI (Settings → "Sync DB from cloud"), which overwrites the local DB.
+- You can also trigger a restore at runtime from the UI (Settings → "Sync DB from cloud"); this overwrites the local DB and restarts the service to avoid Litestream WAL sync conflicts.
 
 ## Docker
 The provided `Dockerfile` builds a slim Rust runtime image including the static Next export. First-time empty volumes are auto-initialized by the server.
