@@ -1101,6 +1101,11 @@ fn init_db(db_path: &StdPath) -> anyhow::Result<Connection> {
     conn.execute_batch(
         r"
         PRAGMA journal_mode = WAL;
+        -- Litestream expects to control checkpointing; disable SQLite's auto-checkpointing
+        -- to avoid WAL truncation/checkpoint races under load.
+        PRAGMA wal_autocheckpoint = 0;
+        -- Avoid transient "database is locked" errors when Litestream performs checkpoints.
+        PRAGMA busy_timeout = 5000;
         PRAGMA foreign_keys = ON;
         CREATE TABLE IF NOT EXISTS ClipboardItem (
           id TEXT PRIMARY KEY NOT NULL,
