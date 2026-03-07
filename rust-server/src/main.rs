@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr, time::Duration};
+﻿use std::{env, net::SocketAddr, time::Duration};
 
 use axum::body::Body;
 use axum::http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
@@ -8,7 +8,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, Method, StatusCode, Uri},
     middleware::from_fn_with_state,
     response::sse::{Event, KeepAlive, Sse},
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Redirect, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -209,6 +209,8 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/clipboard/reorder", post(reorder_clipboard))
         .route("/admin/sync-from-cloud", post(sync_from_cloud))
+        .route("/auth/access-token", post(issue_access_token))
+        .route("/share-target", post(web_share_target))
         // Files
         .route("/files/:id", get(get_file))
         // Allow large multipart bodies (up to 210MB)
@@ -222,7 +224,7 @@ async fn main() -> anyhow::Result<()> {
 
     let api = Router::new().nest("/api", protected.merge(public));
 
-    // Static front-end serving (tries STATIC_DIR, then ./out, ./.next-export, ../out, ../.next-export)
+    // Static front-end serving (tries STATIC_DIR, then ./out, legacy ./.next-export, ../out, ../.next-export)
     let static_root = env::var("STATIC_DIR").map_or_else(
         |_| {
             let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -698,6 +700,53 @@ struct VerifyBody {
     password: String,
 }
 
+fn access_token_ttl_seconds() -> i64 {
+    env::var("AUTH_TOKEN_MAX_AGE_SECONDS")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(7_776_000)
+}
+
+fn issue_access_token_for(expected: &str) -> (String, i64) {
+    let expires_at = OffsetDateTime::now_utc().unix_timestamp() + access_token_ttl_seconds();
+    let mut buf = [0u8; 18];
+    rand::thread_rng().fill_bytes(&mut buf);
+    let nonce = B64_URL_SAFE_NO_PAD.encode(buf);
+    let payload = format!("{expires_at}.{nonce}");
+    let mut hasher = Sha256::new();
+    hasher.update(expected.as_bytes());
+    hasher.update(b"|access-token|");
+    hasher.update(payload.as_bytes());
+    let signature = B64_URL_SAFE_NO_PAD.encode(hasher.finalize());
+    (format!("v1.{payload}.{signature}"), expires_at)
+}
+
+fn verify_access_token(candidate: &str, expected: &str) -> bool {
+    let parts: Vec<&str> = candidate.split('.').collect();
+    if parts.len() != 4 || parts[0] != "v1" {
+        return false;
+    }
+    let expires_at = match parts[1].parse::<i64>() {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    if expires_at <= OffsetDateTime::now_utc().unix_timestamp() {
+        return false;
+    }
+    let payload = format!("{}.{}", parts[1], parts[2]);
+    let mut hasher = Sha256::new();
+    hasher.update(expected.as_bytes());
+    hasher.update(b"|access-token|");
+    hasher.update(payload.as_bytes());
+    let signature = B64_URL_SAFE_NO_PAD.encode(hasher.finalize());
+    signature == parts[3]
+}
+
+fn matches_auth_credential(candidate: &str, expected: &str) -> bool {
+    candidate == expected || verify_access_token(candidate, expected)
+}
+
 async fn auth_verify(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -747,10 +796,36 @@ async fn auth_verify(
             ""
         }
     );
-    let mut res = Json(serde_json::json!({"success": true})).into_response();
+    let (access_token, access_token_expires_at) = issue_access_token_for(&expected);
+    let mut res = Json(serde_json::json!({
+        "success": true,
+        "accessToken": access_token,
+        "accessTokenExpiresAt": epoch_to_iso(access_token_expires_at),
+    }))
+    .into_response();
     res.headers_mut()
         .insert("set-cookie", HeaderValue::from_str(&cookie).unwrap());
     res
+}
+
+async fn issue_access_token(State(state): State<AppState>) -> Response {
+    let Some(expected) = state.password.as_ref() else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error":"Authentication not configured on server"})),
+        )
+            .into_response();
+    };
+    let (access_token, access_token_expires_at) = issue_access_token_for(expected);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "success": true,
+            "accessToken": access_token,
+            "accessTokenExpiresAt": epoch_to_iso(access_token_expires_at),
+        })),
+    )
+        .into_response()
 }
 
 async fn auth_logout(headers: HeaderMap) -> Response {
@@ -826,7 +901,7 @@ async fn auth_mw(
         .and_then(|v| v.to_str().ok())
     {
         if let Some(token) = auth.strip_prefix("Bearer ") {
-            if token == expected.as_str() {
+            if matches_auth_credential(token, expected.as_str()) {
                 ok = true;
             }
         }
@@ -856,7 +931,7 @@ async fn auth_mw(
         if allow_q {
             if let Some(q) = req.uri().query() {
                 for (k, v) in form_urlencoded::parse(q.as_bytes()) {
-                    if k == "auth" && v.as_ref() == expected.as_str() {
+                    if k == "auth" && matches_auth_credential(v.as_ref(), expected.as_str()) {
                         ok = true;
                         break;
                     }
@@ -1279,117 +1354,117 @@ enum InType {
     File,
 }
 
-async fn create_clipboard(
-    State(state): State<AppState>,
-    mut multipart: Multipart,
-) -> impl IntoResponse {
-    const MAX_INLINE: usize = 256 * 1024;
-    let mut content: Option<String> = None;
-    let mut in_type: Option<InType> = None;
-    let mut file_name: Option<String> = None;
-    let mut content_type: Option<String> = None;
-    let mut file_size: Option<i64> = None;
-    let mut inline_data: Option<Vec<u8>> = None;
-    let mut file_path_rel: Option<String> = None;
-    // share params (unified flow: every item is a share)
-    let mut share_expires_in: Option<i64> = None; // seconds; None => default never expire
-    let mut share_max_downloads: Option<i64> = None;
-    let mut share_password: Option<String> = None;
-    while let Some(field) = multipart.next_field().await.unwrap_or(None) {
-        let name = field.name().map(|s| s.to_string());
-        match name.as_deref() {
-            Some("content") => {
-                content = Some(field.text().await.unwrap_or_default());
-            }
-            Some("type") => {
-                let v = field.text().await.unwrap_or_default();
-                in_type = match v.as_str() {
-                    "TEXT" => Some(InType::Text),
-                    "IMAGE" => Some(InType::Image),
-                    "FILE" => Some(InType::File),
-                    _ => None,
-                };
-            }
-            Some("file") => {
-                let fname = field.file_name().map(|s| s.to_string());
-                let ctype = field.content_type().map(|s| s.to_string());
-                file_name = fname;
-                content_type = ctype;
+const MAX_INLINE_UPLOAD: usize = 256 * 1024;
 
-                let mut total: usize = 0;
-                let mut full_data: Vec<u8> = Vec::new();
+#[derive(Default)]
+struct CreateClipboardPayload {
+    content: Option<String>,
+    in_type: Option<InType>,
+    file_name: Option<String>,
+    content_type: Option<String>,
+    file_size: Option<i64>,
+    inline_data: Option<Vec<u8>>,
+    file_path_rel: Option<String>,
+    share_expires_in: Option<i64>,
+    share_max_downloads: Option<i64>,
+    share_password: Option<String>,
+}
 
-                let mut field_stream = field;
-                while let Some(chunk) = field_stream.chunk().await.unwrap_or(None) {
-                    total += chunk.len();
-                    full_data.extend_from_slice(&chunk);
-                }
+async fn persist_upload_blob(
+    state: &AppState,
+    file_name: Option<&str>,
+    full_data: Vec<u8>,
+) -> Result<(Option<i64>, Option<Vec<u8>>, Option<String>), Response> {
+    let total = full_data.len();
+    if total <= MAX_INLINE_UPLOAD {
+        return Ok((Some(total as i64), Some(full_data), None));
+    }
 
-                file_size = Some(total as i64);
-                if total <= MAX_INLINE {
-                    inline_data = Some(full_data);
-                    file_path_rel = None;
-                } else {
-                    let rand_id = Uuid::new_v4().to_string();
-                    let ext = file_name
-                        .as_ref()
-                        .and_then(|n| {
-                            std::path::Path::new(n).extension().and_then(|s| s.to_str())
-                        })
-                        .unwrap_or("");
-                    let gen = if ext.is_empty() {
-                        rand_id
-                    } else {
-                        format!("{}.{ext}", rand_id)
-                    };
-                    let rel = format!("uploads/{}", gen);
-                    if let Err(e) = state.storage.put(&rel, full_data).await {
-                        return (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(serde_json::json!({"error": "upload failed", "detail": e.to_string()})),
-                        ).into_response();
-                    }
-                    file_path_rel = Some(rel);
-                    inline_data = None;
-                }
+    let rand_id = Uuid::new_v4().to_string();
+    let ext = file_name
+        .and_then(|name| StdPath::new(name).extension().and_then(|s| s.to_str()))
+        .unwrap_or("");
+    let generated = if ext.is_empty() {
+        rand_id
+    } else {
+        format!("{}.{ext}", rand_id)
+    };
+    let rel = format!("uploads/{}", generated);
+    if let Err(e) = state.storage.put(&rel, full_data).await {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "upload failed", "detail": e.to_string()})),
+        )
+            .into_response());
+    }
+    Ok((Some(total as i64), None, Some(rel)))
+}
+
+fn merge_share_target_text(title: Option<String>, text: Option<String>, url: Option<String>) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    for value in [title, text, url] {
+        if let Some(v) = value {
+            let trimmed = v.trim();
+            if !trimmed.is_empty() {
+                parts.push(trimmed.to_string());
             }
-            Some("shareExpiresIn") => {
-                // 0 or absent => never expire
-                let v = field.text().await.unwrap_or_default();
-                if let Ok(n) = v.parse::<i64>() {
-                    share_expires_in = Some(n.max(0));
-                }
-            }
-            Some("shareMaxDownloads") => {
-                let v = field.text().await.unwrap_or_default();
-                if let Ok(n) = v.parse::<i64>() {
-                    share_max_downloads = Some(n);
-                }
-            }
-            Some("sharePassword") => {
-                let v = field.text().await.unwrap_or_default();
-                if !v.trim().is_empty() {
-                    share_password = Some(v);
-                }
-            }
-            _ => {}
         }
     }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
+    }
+}
+
+async fn save_clipboard_item(
+    state: &AppState,
+    payload: CreateClipboardPayload,
+) -> Result<serde_json::Value, Response> {
+    let CreateClipboardPayload {
+        content,
+        in_type,
+        file_name,
+        file_size,
+        content_type,
+        inline_data,
+        file_path_rel,
+        share_expires_in,
+        share_max_downloads,
+        share_password,
+    } = payload;
+
     if content.is_none() && inline_data.is_none() && file_path_rel.is_none() {
-        return (
+        return Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error":"Content or file is required"})),
         )
-            .into_response();
+            .into_response());
     }
+
+    let inferred_type = in_type.unwrap_or_else(|| {
+        if inline_data.is_some() || file_path_rel.is_some() {
+            if content_type
+                .as_deref()
+                .map(|value| value.starts_with("image/"))
+                .unwrap_or(false)
+            {
+                InType::Image
+            } else {
+                InType::File
+            }
+        } else {
+            InType::Text
+        }
+    });
+
     let id = Uuid::new_v4().to_string();
-    let t = match in_type.unwrap_or(InType::Text) {
+    let t = match inferred_type {
         InType::Text => "TEXT",
         InType::Image => "IMAGE",
         InType::File => "FILE",
     };
     let now = now_unix();
-    // Assign new items the highest sortWeight so they always appear first
     let new_weight: i64 = {
         let conn = state.db.lock().unwrap();
         let max: i64 = conn
@@ -1404,11 +1479,11 @@ async fn create_clipboard(
             "INSERT INTO ClipboardItem (id,type,content,fileName,fileSize,sortWeight,contentType,inlineData,filePath,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?, ?, ?, ?, ?)",
             params![id, t, content, file_name, file_size, w, content_type, inline_data, file_path_rel, now, now]
         ) {
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":"db write failed","detail": e.to_string()}))).into_response();
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":"db write failed","detail": e.to_string()}))).into_response());
         }
         w
     };
-    // select minimal fields for broadcast/response
+
     let item = serde_json::json!({
         "id": id,
         "type": t,
@@ -1423,9 +1498,8 @@ async fn create_clipboard(
         name: "clipboard:created".into(),
         data: item.clone(),
     });
-    // Auto-create share for this item (never expire by default, unless provided)
+
     let (token, expires_at_abs, requires_password) = {
-        // token 18 random bytes -> base64url no pad
         let mut buf = [0u8; 18];
         rand::thread_rng().fill_bytes(&mut buf);
         let token = B64_URL_SAFE_NO_PAD.encode(buf);
@@ -1433,7 +1507,6 @@ async fn create_clipboard(
             Some(sec) if sec > 0 => Some(now + sec),
             _ => None,
         };
-        // password hash
         let password_hash: Option<String> = share_password.as_ref().and_then(|p| {
             if p.trim().is_empty() {
                 None
@@ -1462,7 +1535,6 @@ async fn create_clipboard(
         (token, expires_at_abs, share_password.is_some())
     };
 
-    // Build response: include share info
     let mut resp_obj = item.as_object().cloned().unwrap_or_default();
     let share_url = format!("/s/?token={}", token);
     resp_obj.insert(
@@ -1476,11 +1548,136 @@ async fn create_clipboard(
             "downloadCount": 0
         }),
     );
-    (
-        StatusCode::CREATED,
-        Json(serde_json::Value::Object(resp_obj)),
-    )
-        .into_response()
+    Ok(serde_json::Value::Object(resp_obj))
+}
+
+async fn create_clipboard(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    let mut payload = CreateClipboardPayload::default();
+    while let Some(field) = multipart.next_field().await.unwrap_or(None) {
+        let name = field.name().map(|s| s.to_string());
+        match name.as_deref() {
+            Some("content") => {
+                payload.content = Some(field.text().await.unwrap_or_default());
+            }
+            Some("type") => {
+                let v = field.text().await.unwrap_or_default();
+                payload.in_type = match v.as_str() {
+                    "TEXT" => Some(InType::Text),
+                    "IMAGE" => Some(InType::Image),
+                    "FILE" => Some(InType::File),
+                    _ => None,
+                };
+            }
+            Some("file") => {
+                let fname = field.file_name().map(|s| s.to_string());
+                let ctype = field.content_type().map(|s| s.to_string());
+                let mut full_data: Vec<u8> = Vec::new();
+                let mut field_stream = field;
+                while let Some(chunk) = field_stream.chunk().await.unwrap_or(None) {
+                    full_data.extend_from_slice(&chunk);
+                }
+                let (file_size, inline_data, file_path_rel) =
+                    match persist_upload_blob(&state, fname.as_deref(), full_data).await {
+                        Ok(result) => result,
+                        Err(resp) => return resp,
+                    };
+                payload.file_name = fname;
+                payload.content_type = ctype;
+                payload.file_size = file_size;
+                payload.inline_data = inline_data;
+                payload.file_path_rel = file_path_rel;
+            }
+            Some("shareExpiresIn") => {
+                let v = field.text().await.unwrap_or_default();
+                if let Ok(n) = v.parse::<i64>() {
+                    payload.share_expires_in = Some(n.max(0));
+                }
+            }
+            Some("shareMaxDownloads") => {
+                let v = field.text().await.unwrap_or_default();
+                if let Ok(n) = v.parse::<i64>() {
+                    payload.share_max_downloads = Some(n);
+                }
+            }
+            Some("sharePassword") => {
+                let v = field.text().await.unwrap_or_default();
+                if !v.trim().is_empty() {
+                    payload.share_password = Some(v);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    match save_clipboard_item(&state, payload).await {
+        Ok(body) => (StatusCode::CREATED, Json(body)).into_response(),
+        Err(resp) => resp,
+    }
+}
+
+async fn web_share_target(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    let mut title: Option<String> = None;
+    let mut text_value: Option<String> = None;
+    let mut url: Option<String> = None;
+    let mut file_name: Option<String> = None;
+    let mut content_type: Option<String> = None;
+    let mut file_bytes: Option<Vec<u8>> = None;
+
+    while let Some(field) = multipart.next_field().await.unwrap_or(None) {
+        let name = field.name().map(|s| s.to_string());
+        match name.as_deref() {
+            Some("title") => title = Some(field.text().await.unwrap_or_default()),
+            Some("text") => text_value = Some(field.text().await.unwrap_or_default()),
+            Some("url") => url = Some(field.text().await.unwrap_or_default()),
+            Some("files") if file_bytes.is_none() => {
+                file_name = field.file_name().map(|s| s.to_string());
+                content_type = field.content_type().map(|s| s.to_string());
+                let mut full_data: Vec<u8> = Vec::new();
+                let mut field_stream = field;
+                while let Some(chunk) = field_stream.chunk().await.unwrap_or(None) {
+                    full_data.extend_from_slice(&chunk);
+                }
+                file_bytes = Some(full_data);
+            }
+            _ => {}
+        }
+    }
+
+    let mut payload = CreateClipboardPayload::default();
+    payload.content = merge_share_target_text(title, text_value, url);
+
+    if let Some(bytes) = file_bytes {
+        let (file_size, inline_data, file_path_rel) =
+            match persist_upload_blob(&state, file_name.as_deref(), bytes).await {
+                Ok(result) => result,
+                Err(resp) => return resp,
+            };
+        payload.in_type = Some(if content_type
+            .as_deref()
+            .map(|value| value.starts_with("image/"))
+            .unwrap_or(false)
+        {
+            InType::Image
+        } else {
+            InType::File
+        });
+        payload.file_name = file_name;
+        payload.content_type = content_type;
+        payload.file_size = file_size;
+        payload.inline_data = inline_data;
+        payload.file_path_rel = file_path_rel;
+    }
+
+    match save_clipboard_item(&state, payload).await {
+        Ok(_) => Redirect::to("/?shared=1").into_response(),
+        Err(resp) => resp,
+    }
 }
 
 async fn get_clipboard(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
@@ -2544,3 +2741,4 @@ async fn share_download_inner(
     )
         .into_response()
 }
+

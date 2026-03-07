@@ -20,7 +20,7 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { safeCopyText } from '@/lib/copy';
-import { authFetch, verifyPassword, getStoredPassword, logout } from '@/lib/auth';
+import { authFetch, verifyPassword, getMobileConnectionBundle, getResolvedApiBase, getStoredAccessToken, getStoredAuthCredential, logout, refreshAccessToken } from '@/lib/auth';
 import ThemeSelect from '@/components/ThemeSelect';
 import { Sheet, SheetContent, SheetFooter, SheetHeader } from '@/components/ui/sheet';
 import { CLIPBOARD_CREATED_EVENT, CLIPBOARD_DELETED_EVENT, CLIPBOARD_REORDERED_EVENT } from '@/lib/socket-events';
@@ -32,6 +32,8 @@ const AddItemDialog = dynamic(() => import('@/components/clipboard/AddItemDialog
 const ItemDetailDialog = dynamic(() => import('@/components/clipboard/ItemDetailDialog'), { ssr: false });
 // ShareManagerDialog no longer needed in new flow
 const CreateShareDialog = dynamic(() => import('@/components/clipboard/CreateShareDialog'), { ssr: false });
+const MobileQuickActions = dynamic(() => import('@/components/clipboard/MobileQuickActions'), { ssr: false });
+const MobileOnboardingCard = dynamic(() => import('@/components/clipboard/MobileOnboardingCard'), { ssr: false });
 
 type ClipboardItem = GridItem;
 
@@ -69,13 +71,26 @@ export default function Home() {
     searchTermRef.current = searchTerm;
   }, [searchTerm]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    const imported = url.searchParams.get('shared');
+    if (imported !== '1') return;
+    toast({
+      title: '\u5df2\u5bfc\u5165\u5206\u4eab\u5185\u5bb9',
+      description: '\u6765\u81ea\u7cfb\u7edf\u5206\u4eab\u7684\u5185\u5bb9\u5df2\u7ecf\u8fdb\u5165 Clip Relay\u3002',
+    });
+    url.searchParams.delete('shared');
+    window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+  }, [toast]);
+
   // DnD moved into ClipboardGrid
 
   // 静默鉴权：若已有 Cookie，则自动进入，无需再次输入
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/api/health', { credentials: 'include' });
+        const res = await authFetch('/api/health');
         if (res.ok) {
           setAuthenticated(true);
         }
@@ -223,7 +238,7 @@ export default function Home() {
     try {
       // include credentials so auth cookie works on cross-origin if configured
       const useQueryAuth = (process.env.NEXT_PUBLIC_SSE_AUTH_IN_QUERY || '') === '1';
-      const pwd = getStoredPassword();
+      const pwd = getStoredAuthCredential();
       const url = useQueryAuth && pwd ? `${API_BASE}/api/events?auth=${encodeURIComponent(pwd)}` : `${API_BASE}/api/events`;
       es = new EventSource(url, { withCredentials: true } as any);
       es.addEventListener(CLIPBOARD_CREATED_EVENT, (ev: MessageEvent) => {
@@ -362,7 +377,7 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-6">
+    <div className="min-h-screen bg-background p-4 pb-32 md:p-6 md:pb-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="relative flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between mb-6">
@@ -397,10 +412,12 @@ export default function Home() {
               </Button>
             </div>
             <div className="flex gap-2 items-center">
-              <AddItemDialog
-                onItemAdded={() => fetchItems(searchTerm)}
-                onShareCreated={(share) => { setQrShare({ token: share.token, url: share.url }); setQrOpen(true); }}
-              />
+              <div className="hidden sm:block">
+                <AddItemDialog
+                  onItemAdded={() => fetchItems(searchTerm)}
+                  onShareCreated={(share) => { setQrShare({ token: share.token, url: share.url }); setQrOpen(true); }}
+                />
+              </div>
               {/* 分享管理已整合到详情页，入口暂时隐藏 */}
               {/* Desktop settings */}
               <Button variant="ghost" size="icon" title="设置" className="hidden sm:inline-flex" onClick={() => setSettingsOpen(true)}>
@@ -420,6 +437,8 @@ export default function Home() {
           viewMode={viewMode}
           onChangeViewMode={setViewMode}
         />
+
+        <MobileOnboardingCard />
 
         {/* Clipboard Items (grid or list) */}
         {viewMode === 'grid' ? (
@@ -528,6 +547,9 @@ export default function Home() {
       </div>
       
       {/* 统一删除确认弹窗 */}
+
+      <MobileQuickActions onItemAdded={() => fetchItems(searchTermRef.current || "")} />
+
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -645,7 +667,7 @@ function AuthDialog({ onSuccess }: { onSuccess: () => void }) {
   );
 }
 
-// 设置抽屉
+// Settings drawer
 function SettingsDrawer({
   open,
   onOpenChange,
@@ -664,61 +686,195 @@ function SettingsDrawer({
   onChangeViewMode: (m: 'grid' | 'list') => void;
 }) {
   const { toast } = useToast();
+  const [hasAccessToken, setHasAccessToken] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setHasAccessToken(!!getStoredAccessToken());
+    }
+  }, [open]);
+
+  const downloadBundle = () => {
+    const bundle = getMobileConnectionBundle();
+    if (!bundle || typeof window === 'undefined') return false;
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'clip-relay-connection.json';
+    anchor.click();
+    window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
+    return true;
+  };
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right">
         <SheetHeader>
-          <div className="text-lg font-semibold">设置</div>
+          <div className="text-lg font-semibold">{"\u8bbe\u7f6e"}</div>
         </SheetHeader>
         <div className="px-4 py-2 space-y-2">
           <Button variant="ghost" className="w-full justify-start" asChild>
             <a href={repoUrl} target="_blank" rel="noopener noreferrer">
-              <Github className="h-4 w-4 mr-2" /> GitHub 仓库
+              <Github className="h-4 w-4 mr-2" /> {"GitHub \u4ed3\u5e93"}
             </a>
           </Button>
           <Button variant="ghost" className="w-full justify-start" asChild>
             <a href={issuesUrl} target="_blank" rel="noopener noreferrer">
-              <Bug className="h-4 w-4 mr-2" /> 提交问题
+              <Bug className="h-4 w-4 mr-2" /> {"\u63d0\u4ea4\u95ee\u9898"}
             </a>
           </Button>
           <Button
             variant="ghost"
             className="w-full justify-start"
             onClick={async () => {
-              if (!confirm('确定要从云端同步数据库吗？这会覆盖本地现有数据并重启连接。')) return;
+              if (!confirm("\u786e\u5b9a\u8981\u4ece\u4e91\u7aef\u540c\u6b65\u6570\u636e\u5e93\u5417\uff1f\u8fd9\u4f1a\u8986\u76d6\u672c\u5730\u73b0\u6709\u6570\u636e\u5e76\u91cd\u542f\u8fde\u63a5\u3002")) return;
               try {
                 const res = await authFetch('/api/admin/sync-from-cloud', { method: 'POST' });
                 const data = await res.json();
                 if (res.ok) {
-                  toast({ title: '已触发云端恢复', description: '服务将重启并从云端恢复数据库，请稍后刷新页面…' });
+                  toast({
+                    title: "\u5df2\u89e6\u53d1\u4e91\u7aef\u6062\u590d",
+                    description: "\u670d\u52a1\u5c06\u91cd\u542f\u5e76\u4ece\u4e91\u7aef\u6062\u590d\u6570\u636e\u5e93\uff0c\u8bf7\u7a0d\u540e\u5237\u65b0\u9875\u9762\u2026",
+                  });
                   setTimeout(() => window.location.reload(), 3500);
                 } else {
-                  throw new Error(data.error || '同步失败');
+                  throw new Error(data.error || "\u540c\u6b65\u5931\u8d25");
                 }
               } catch (e: any) {
-                toast({ title: '同步失败', description: e.message, variant: 'destructive' });
+                toast({ title: "\u540c\u6b65\u5931\u8d25", description: e.message, variant: "destructive" });
               }
             }}
           >
-            <CloudDownload className="h-4 w-4 mr-2" /> 从云端同步数据库
+            <CloudDownload className="h-4 w-4 mr-2" /> {"\u4ece\u4e91\u7aef\u540c\u6b65\u6570\u636e\u5e93"}
           </Button>
           <div className="flex items-center justify-between py-2">
-            <div className="text-sm">视图模式</div>
+            <div className="text-sm">{"\u89c6\u56fe\u6a21\u5f0f"}</div>
             <div>
-              <Select value={viewMode} onValueChange={(v) => onChangeViewMode((v as 'grid' | 'list'))}>
+              <Select value={viewMode} onValueChange={(v) => onChangeViewMode(v as 'grid' | 'list')}>
                 <SelectTrigger size="sm">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="grid">网格</SelectItem>
-                  <SelectItem value="list">列表</SelectItem>
+                  <SelectItem value="grid">{"\u7f51\u683c"}</SelectItem>
+                  <SelectItem value="list">{"\u5217\u8868"}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           </div>
           <div className="flex items-center justify-between py-2">
-            <div className="text-sm">主题</div>
+            <div className="text-sm">{"\u4e3b\u9898"}</div>
             <ThemeSelect />
+          </div>
+          <div className="rounded-lg border px-3 py-3 space-y-2">
+            <div>
+              <div className="text-sm font-medium">{"\u8bbe\u5907\u51ed\u8bc1"}</div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {`\u4e3a\u540e\u7eed\u79fb\u52a8\u7aef\u8584\u58f3\u9884\u7559\u7684\u957f\u671f\u51ed\u8bc1\u3002\u5f53\u524d\u72b6\u6001\uff1a${hasAccessToken ? "\u5df2\u751f\u6210" : "\u672a\u751f\u6210"}\u3002`}
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={async () => {
+                  try {
+                    const token = await refreshAccessToken();
+                    setHasAccessToken(true);
+                    const copied = await safeCopyText(token);
+                    toast({
+                      title: "\u8bbe\u5907\u51ed\u8bc1\u5df2\u5237\u65b0",
+                      description: copied
+                        ? "\u5df2\u590d\u5236\u5230\u526a\u8d34\u677f\uff0c\u53ef\u76f4\u63a5\u7528\u4e8e\u79fb\u52a8\u7aef\u63a5\u5165\u3002"
+                        : "\u5df2\u5237\u65b0\uff0c\u53ef\u7a0d\u540e\u5728\u6b64\u518d\u6b21\u590d\u5236\u3002",
+                    });
+                  } catch (e: any) {
+                    toast({ title: "\u5237\u65b0\u5931\u8d25", description: e.message, variant: "destructive" });
+                  }
+                }}
+              >
+                {"\u5237\u65b0\u51ed\u8bc1"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                disabled={!hasAccessToken}
+                onClick={async () => {
+                  const token = getStoredAccessToken();
+                  if (!token) return;
+                  const copied = await safeCopyText(token);
+                  toast({
+                    title: copied ? "\u5df2\u590d\u5236\u8bbe\u5907\u51ed\u8bc1" : "\u590d\u5236\u5931\u8d25",
+                    description: copied
+                      ? "\u53ef\u5728\u79fb\u52a8\u7aef\u914d\u7f6e\u65f6\u76f4\u63a5\u7c98\u8d34\u3002"
+                      : "\u8bf7\u624b\u52a8\u590d\u5236\u6d4f\u89c8\u5668\u4e2d\u4fdd\u5b58\u7684\u8bbe\u5907\u51ed\u8bc1\u3002",
+                    variant: copied ? undefined : "destructive",
+                  });
+                }}
+              >
+                {"\u590d\u5236\u51ed\u8bc1"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={async () => {
+                  const copied = await safeCopyText(getResolvedApiBase());
+                  toast({
+                    title: copied ? "\u5df2\u590d\u5236\u670d\u52a1\u5730\u5740" : "\u590d\u5236\u5931\u8d25",
+                    description: copied
+                      ? "\u53ef\u5728\u540e\u7eed\u79fb\u52a8\u58f3\u4e2d\u76f4\u63a5\u586b\u5165\u3002"
+                      : "\u8bf7\u624b\u52a8\u8bb0\u4e0b\u5f53\u524d\u7ad9\u70b9\u7684 API \u5730\u5740\u3002",
+                    variant: copied ? undefined : "destructive",
+                  });
+                }}
+              >
+                {"\u590d\u5236\u5730\u5740"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                disabled={!hasAccessToken}
+                onClick={async () => {
+                  const bundle = getMobileConnectionBundle();
+                  if (!bundle) return;
+                  const copied = await safeCopyText(JSON.stringify(bundle, null, 2));
+                  toast({
+                    title: copied ? "\u5df2\u590d\u5236\u79fb\u52a8\u7aef\u63a5\u5165\u5305" : "\u590d\u5236\u5931\u8d25",
+                    description: copied
+                      ? "\u540e\u7eed\u79fb\u52a8\u58f3\u53ef\u76f4\u63a5\u7c98\u8d34\u8fd9\u4e2a JSON \u3002"
+                      : "\u8bf7\u624b\u52a8\u590d\u5236\u5f53\u524d\u8bbe\u5907\u7684\u63a5\u5165\u4fe1\u606f\u3002",
+                    variant: copied ? undefined : "destructive",
+                  });
+                }}
+              >
+                {"\u590d\u5236\u63a5\u5165\u5305"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                disabled={!hasAccessToken}
+                onClick={() => {
+                  const ok = downloadBundle();
+                  toast({
+                    title: ok ? "\u5df2\u4e0b\u8f7d\u63a5\u5165\u5305" : "\u4e0b\u8f7d\u5931\u8d25",
+                    description: ok
+                      ? "\u53ef\u7528\u4e8e\u540e\u7eed Android/iPhone \u8584\u58f3\u5bfc\u5165\u3002"
+                      : "\u8bf7\u5148\u751f\u6210\u8bbe\u5907\u51ed\u8bc1\u518d\u5bfc\u51fa\u63a5\u5165\u5305\u3002",
+                    variant: ok ? undefined : "destructive",
+                  });
+                }}
+              >
+                {"\u4e0b\u8f7d\u63a5\u5165\u5305"}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {"\u5982\u679c\u7cfb\u7edf\u5206\u4eab\u9762\u677f\u91cc\u8fd8\u6ca1\u6709 Clip Relay\uff0c\u66f4\u65b0\u540e\u8bf7\u5148\u5220\u6389\u65e7\u7684\u4e3b\u5c4f\u5feb\u6377\u65b9\u5f0f\uff0c\u518d\u91cd\u65b0\u5b89\u88c5\u5230\u4e3b\u5c4f\u5e55\u3002"}
+            </p>
           </div>
         </div>
         <SheetFooter>
@@ -728,13 +884,13 @@ function SettingsDrawer({
             onClick={async () => {
               try {
                 await logout();
-                toast({ title: '已退出登录' });
+                toast({ title: "\u5df2\u9000\u51fa\u767b\u5f55" });
                 onLogout();
               } catch {}
               onOpenChange(false);
             }}
           >
-            <LogOut className="h-4 w-4 mr-2" /> 退出登录
+            <LogOut className="h-4 w-4 mr-2" /> {"\u9000\u51fa\u767b\u5f55"}
           </Button>
         </SheetFooter>
       </SheetContent>

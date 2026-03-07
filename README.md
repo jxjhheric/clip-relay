@@ -1,4 +1,4 @@
-# Clip Relay
+﻿# Clip Relay
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -35,7 +35,7 @@ npm install
 
 ### Local run (Rust server + static UI)
 ```bash
-# 1) Build static export to .next-export/
+# 1) Build static export to out/
 npm run build
 
 # 2) Start Rust API server (serves static UI too)
@@ -49,14 +49,14 @@ Create a `.env` file (minimum):
 ```
 CLIPBOARD_PASSWORD="change-me"
 # Optional: override defaults
-# STATIC_DIR="/app/.next-export"   # where static UI is served from
+# STATIC_DIR="/app/out"   # where static UI is served from
 # PORT=8087                         # server listen port
 # AUTH_MAX_AGE_SECONDS=604800       # auth cookie max-age in seconds (default: 7 days)
 # DATA_DIR="/app/data"              # directory containing SQLite + uploads (default: auto-detect)
 # HEALTH_VERBOSE=1                   # include dataDir/dbPath in /api/healthz
 ```
 - `CLIPBOARD_PASSWORD` controls access to the UI.
-- `STATIC_DIR` is optional; by default the server tries `.next-export/`, `out/`, or `../.next-export`.
+- `STATIC_DIR` is optional; by default the server tries `out/`, then legacy `.next-export/`, then parent-directory fallbacks.
 - `AUTH_MAX_AGE_SECONDS` controls cookie lifetime. Defaults to 7 days; tune longer/shorter as needed.
 - The SQLite database lives under `data/custom.db` (auto-created). Docker images set `DATA_DIR=/app/data` by default.
   - For non-Docker local development, the server auto-detects the data directory (usually `./data` relative to the project root).
@@ -113,7 +113,7 @@ services:
 
 Notes:
 - The working directory is `/app`. The server writes SQLite DB to `/app/data/custom.db` and uploads to `/app/data/uploads`.
-- The static UI is embedded at build time under `/app/.next-export`.
+- The static UI is embedded at build time under `/app/out`.
 
 #### First-time init note
 No manual step is needed. The app creates tables on first start when the SQLite file is empty.
@@ -138,3 +138,4 @@ rust-server/         # Rust (axum) API server (serves static UI)
 
 ## License
 MIT  - Please refer to [LICENSE](LICENSE)
+

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,7 +13,17 @@ import axios from "axios";
 import { File as FileIcon, Plus } from "lucide-react";
 // unified add-and-share flow: configure share params here and show result after creation
 
-export default function AddItemDialog({ onItemAdded, onShareCreated }: { onItemAdded: () => void; onShareCreated?: (share: { token: string; url: string; id?: string }) => void }) {
+export default function AddItemDialog({
+  onItemAdded,
+  onShareCreated,
+  trigger,
+  dialogTitle = "?????",
+}: {
+  onItemAdded: () => void;
+  onShareCreated?: (share: { token: string; url: string; id?: string }) => void;
+  trigger?: ReactNode;
+  dialogTitle?: string;
+}) {
   const [open, setOpen] = useState(false);
   const [content, setContent] = useState("");
   const [file, setFile] = useState<File | null>(null);

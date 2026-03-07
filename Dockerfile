@@ -20,7 +20,7 @@ ENV NODE_ENV=production
 RUN npm run build && rm -rf .next && npm cache clean --force
 
 COPY scripts ./scripts
-RUN node ./scripts/precompress.mjs /app/.next-export --write-br --no-gz
+RUN node ./scripts/precompress.mjs /app/out --write-br --no-gz
 
 ##############################
 # Rust build
@@ -52,7 +52,7 @@ ADD https://github.com/benbjohnson/litestream/releases/download/v0.5.8/litestrea
 RUN tar -C /usr/local/bin -xzf /tmp/litestream.tar.gz \
  && rm /tmp/litestream.tar.gz
 
-COPY --chown=0:0 --from=frontend /app/.next-export /app/.next-export
+COPY --chown=0:0 --from=frontend /app/out /app/out
 COPY --chown=0:0 --from=rust-builder /app/rust-server/target/release/clip-relay /usr/local/bin/clip-relay
 
 # Copy litestream config
@@ -65,7 +65,7 @@ RUN chmod a+rx /usr/local/bin/clip-relay /usr/local/bin/litestream \
  && chmod 1777 /app/tmp
 
 ENV RUST_LOG=info \
-    STATIC_DIR=/app/.next-export \
+    STATIC_DIR=/app/out \
     DATA_DIR=/app/data \
     PORT=8087 \
     HOME=/tmp

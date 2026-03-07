@@ -1,4 +1,4 @@
-# Clip Relay
+﻿# Clip Relay
 
 [English](README.md) | 简体中文
 
@@ -29,7 +29,7 @@ Clip Relay 是一个自托管的剪贴板应用，用于在设备间快速分享
 # 安装前端依赖
 npm install
 
-# 1) 构建静态前端到 .next-export/
+# 1) 构建静态前端到 out/
 npm run build
 
 # 2) 启动 Rust 服务（同时服务静态前端）
@@ -51,14 +51,14 @@ npm start
 ```
 CLIPBOARD_PASSWORD="change-me"
 # 可选：覆盖默认设置
-# STATIC_DIR="/app/.next-export"   # 静态前端目录
+# STATIC_DIR="/app/out"   # 静态前端目录
 # PORT=8087                         # 监听端口
 # AUTH_MAX_AGE_SECONDS=604800       # 认证 Cookie 有效期（秒），默认 7 天
 # DATA_DIR="/app/data"              # SQLite + uploads 所在目录（默认：自动检测）
 # HEALTH_VERBOSE=1                   # 在 /api/healthz 返回 dataDir/dbPath（便于排查）
 ```
 - `CLIPBOARD_PASSWORD` 为访问口令。
-- `STATIC_DIR` 可选；默认会自动探测 `.next-export/`、`out/` 等目录。
+- `STATIC_DIR` 可选；默认会优先自动探测 `out/`，并兼容旧的 `.next-export/` 目录。
 - `AUTH_MAX_AGE_SECONDS` 控制登录 Cookie 的有效期（秒）。默认 7 天，设置更短/更长可按需调整。
 - SQLite 位于 `data/custom.db`（首次启动自动创建）。Docker 镜像默认设置 `DATA_DIR=/app/data`。
   - 非 Docker 本地开发时，服务会自动检测数据目录（通常为项目根目录下的 `./data`）。
@@ -122,3 +122,4 @@ rust-server/         # Rust (axum) API 服务（同时服务静态前端）
 
 ## 许可证
 MIT  - 请参阅 [LICENSE](LICENSE)
+

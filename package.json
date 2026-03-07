@@ -9,10 +9,10 @@
     "build:only": "next build",
     "build:export": "next build",
     "start": "node -e \"console.log('Use rust-server (npm run rust:dev) or Docker to serve static build and API');\"",
-    
     "lint": "next lint",
-    "rust:dev": "cross-env RUST_LOG=info cargo run --manifest-path rust-server/Cargo.toml",
-    "rust:build": "cargo build --manifest-path rust-server/Cargo.toml --release"
+    "rust:dev": "cross-env RUST_LOG=info node scripts/cargo-runner.mjs run --manifest-path rust-server/Cargo.toml",
+    "rust:build": "node scripts/cargo-runner.mjs build --manifest-path rust-server/Cargo.toml --release",
+    "rust:check": "node scripts/cargo-runner.mjs check --manifest-path rust-server/Cargo.toml"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -63,7 +63,6 @@
     "sharp": "^0.34.3",
     "sonner": "^2.0.6",
     "tailwind-merge": "^3.3.1",
-    
     "vaul": "^1.1.2",
     "zod": "^4.0.2"
   },

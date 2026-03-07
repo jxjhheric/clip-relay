@@ -2,15 +2,15 @@
 /**
  * Precompress static assets and/or analyze sizes.
  * - Usage examples:
- *   node scripts/precompress.mjs ./.next-export --analyze
- *   node scripts/precompress.mjs ./.next-export --write-br --no-gz
+ *   node scripts/precompress.mjs ./out --analyze
+ *   node scripts/precompress.mjs ./out --write-br --no-gz
  */
 import { promises as fs } from 'node:fs';
 import { constants as zconst, brotliCompressSync, constants as zc } from 'node:zlib';
 import path from 'node:path';
 
 const args = process.argv.slice(2);
-const root = path.resolve(args[0] || '.next-export');
+const root = path.resolve(args[0] || 'out');
 const flags = new Set(args.slice(1));
 
 const DO_ANALYZE = flags.has('--analyze');
