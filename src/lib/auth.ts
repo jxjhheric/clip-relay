@@ -1,9 +1,12 @@
-// 认证相关的工具函数
+﻿// 认证相关的工具函数
+
+import { buildMobileConnectionBundle, type MobileConnectionBundle } from './mobile-connection';
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || '').replace(/\/$/, '');
 
 const PASSWORD_STORAGE_KEY = 'clipboard_password';
 const ACCESS_TOKEN_STORAGE_KEY = 'clipboard_access_token';
+const EMBEDDED_ACCESS_TOKEN_HASH_KEY = 'clipRelayAccessToken';
 
 export function getStoredPassword(): string | null {
   return typeof window !== 'undefined' ? sessionStorage.getItem(PASSWORD_STORAGE_KEY) : null;
@@ -23,19 +26,15 @@ export function getResolvedApiBase(): string {
   return '';
 }
 
-export function getMobileConnectionBundle(): {
-  serverUrl: string;
-  apiBase: string;
-  accessToken: string;
-} | null {
+export function getMobileConnectionBundle(): MobileConnectionBundle | null {
   if (typeof window === 'undefined') return null;
   const accessToken = getStoredAccessToken();
   if (!accessToken) return null;
-  return {
+  return buildMobileConnectionBundle({
     serverUrl: window.location.origin,
     apiBase: getResolvedApiBase(),
     accessToken,
-  };
+  });
 }
 
 export function storeAccessToken(token: string | null) {
@@ -45,6 +44,25 @@ export function storeAccessToken(token: string | null) {
   } else {
     localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
   }
+}
+
+export function consumeEmbeddedAccessTokenFromLocation(): boolean {
+  if (typeof window === 'undefined') return false;
+  const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : '';
+  if (!hash) return false;
+
+  const params = new URLSearchParams(hash);
+  const accessToken = params.get(EMBEDDED_ACCESS_TOKEN_HASH_KEY);
+  if (!accessToken) return false;
+
+  storeAccessToken(accessToken);
+  params.delete(EMBEDDED_ACCESS_TOKEN_HASH_KEY);
+  params.delete('clipRelayBootNonce');
+
+  const nextHash = params.toString();
+  const nextUrl = `${window.location.pathname}${window.location.search}${nextHash ? `#${nextHash}` : ''}`;
+  window.history.replaceState({}, '', nextUrl);
+  return true;
 }
 
 // 获取认证头

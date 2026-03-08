@@ -20,7 +20,7 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { safeCopyText } from '@/lib/copy';
-import { authFetch, verifyPassword, getMobileConnectionBundle, getResolvedApiBase, getStoredAccessToken, getStoredAuthCredential, logout, refreshAccessToken } from '@/lib/auth';
+import { authFetch, verifyPassword, getMobileConnectionBundle, getResolvedApiBase, getStoredAccessToken, getStoredAuthCredential, logout, refreshAccessToken, consumeEmbeddedAccessTokenFromLocation } from '@/lib/auth';
 import ThemeSelect from '@/components/ThemeSelect';
 import { Sheet, SheetContent, SheetFooter, SheetHeader } from '@/components/ui/sheet';
 import { CLIPBOARD_CREATED_EVENT, CLIPBOARD_DELETED_EVENT, CLIPBOARD_REORDERED_EVENT } from '@/lib/socket-events';
@@ -90,6 +90,7 @@ export default function Home() {
   useEffect(() => {
     (async () => {
       try {
+        consumeEmbeddedAccessTokenFromLocation();
         const res = await authFetch('/api/health');
         if (res.ok) {
           setAuthenticated(true);

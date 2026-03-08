@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Clip Relay 移动端</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main id="app-shell" class="app-shell">
+      <section class="hero-card shell-only">
+        <p class="eyebrow">Clip Relay Mobile</p>
+        <h1>Android 优先的轻量移动壳</h1>
+        <p class="hero-copy">
+          从网页端导入接入包后，你就可以在手机里直接使用文本速记、相册上传、拍照上传、
+          Android 系统分享导入，以及应用内嵌的 Clip Relay 主界面。
+        </p>
+      </section>
+
+      <section id="onboarding-card" class="panel shell-only onboarding-card">
+        <h2>第一次使用，按这 3 步来</h2>
+        <div class="onboarding-grid">
+          <article class="onboarding-step">
+            <span class="step-index">01</span>
+            <h3>网页端生成接入包</h3>
+            <p>在 Clip Relay 的设置面板里刷新设备凭证，然后下载或复制移动端接入包。</p>
+          </article>
+          <article class="onboarding-step">
+            <span class="step-index">02</span>
+            <h3>在 App 中导入</h3>
+            <p>把 JSON 粘贴进来，或者直接选择 `clip-relay-connection.json` 文件。</p>
+          </article>
+          <article class="onboarding-step">
+            <span class="step-index">03</span>
+            <h3>直接开始手机采集</h3>
+            <p>之后就可以直接拍照、从相册选图、系统分享导入，或者打开内嵌完整界面。</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel two-col shell-only">
+        <div>
+          <h2>导入接入包</h2>
+          <p class="muted">
+            粘贴网页设置面板导出的 JSON，或者直接选择下载好的
+            <code>clip-relay-connection.json</code> 文件。
+          </p>
+          <textarea id="bundle-input" class="bundle-input" spellcheck="false" placeholder='{"schemaVersion":1,"app":"clip-relay",...}'></textarea>
+          <div class="row">
+            <button id="import-button" class="primary-button" type="button">导入 JSON</button>
+            <label class="secondary-button file-button">
+              <input id="bundle-file" type="file" accept="application/json" />
+              选择文件
+            </label>
+          </div>
+        </div>
+
+        <div>
+          <h2>已保存的连接</h2>
+          <div id="bundle-summary" class="summary-card empty-state">
+            还没有导入接入包。
+          </div>
+          <div class="row actions-row">
+            <button id="check-connection-button" class="secondary-button" type="button" disabled>检查连接</button>
+            <button id="open-server-button" class="primary-button" type="button" disabled>打开服务端</button>
+            <button id="clear-button" class="secondary-button" type="button" disabled>清除</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel shell-only">
+        <h2>内嵌 Clip Relay</h2>
+        <p class="muted">
+          直接在 App 里打开主界面。移动壳会通过一次性 hash 启动参数把已保存的设备凭证带给网页，
+          让远端页面自动接管登录状态。
+        </p>
+        <div id="embedded-summary" class="summary-card compact-card empty-state">
+          先导入接入包，再在应用内启动 Clip Relay。
+        </div>
+        <div class="row actions-row">
+          <button id="open-embedded-button" class="primary-button" type="button" disabled>打开内嵌应用</button>
+        </div>
+      </section>
+
+      <section id="embedded-shell" class="panel embedded-shell hidden">
+        <div class="embedded-toolbar">
+          <div>
+            <h2>Clip Relay</h2>
+            <p class="muted">当前正在移动壳内运行完整网页界面。</p>
+          </div>
+          <div class="row embedded-toolbar-actions">
+            <button id="reload-embedded-button" class="secondary-button" type="button" disabled>重新加载</button>
+            <button id="back-to-shell-button" class="primary-button" type="button" disabled>返回原生壳</button>
+          </div>
+        </div>
+        <div class="embedded-frame-shell">
+          <iframe
+            id="embedded-frame"
+            class="embedded-frame"
+            title="Clip Relay Embedded View"
+            referrerpolicy="no-referrer"
+            allow="clipboard-read; clipboard-write"
+          ></iframe>
+          <div id="embedded-fallback" class="embedded-fallback hidden">
+            <div class="embedded-fallback-card">
+              <span id="embedded-fallback-badge" class="status-badge">Blocked</span>
+              <h3 id="embedded-fallback-title">Embedded view unavailable</h3>
+              <p id="embedded-fallback-message" class="muted"></p>
+              <p id="embedded-fallback-hint" class="muted">Open the server in a browser or copy the address to inspect it elsewhere.</p>
+              <div class="row embedded-fallback-actions">
+                <button id="embedded-open-browser-button" class="primary-button" type="button" disabled>Open browser</button>
+                <button id="embedded-copy-url-button" class="secondary-button" type="button" disabled>Copy address</button>
+                <button id="embedded-back-shell-panel-button" class="secondary-button" type="button" disabled>Back to shell</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="embedded-quick-dock">
+          <button id="embedded-pick-photos-button" class="primary-button" type="button" disabled>相册</button>
+          <button id="embedded-take-photo-button" class="secondary-button" type="button" disabled>拍照</button>
+          <button id="embedded-import-native-share-button" class="secondary-button" type="button" disabled>导入分享</button>
+          <button id="embedded-back-shell-dock-button" class="secondary-button" type="button" disabled>原生壳</button>
+        </div>
+      </section>
+
+      <section class="panel shell-only">
+        <h2>系统分享接入</h2>
+        <p class="muted">
+          Android 壳现在可以接收系统分享。文本会自动预填，共享文件的 URI 也可以在应用内解析成可上传字节。
+        </p>
+        <div id="native-share-summary" class="summary-card empty-state compact-card">
+          暂时还没有收到系统分享内容。
+        </div>
+        <div class="row actions-row">
+          <button id="import-native-share-button" class="primary-button" type="button" disabled>导入共享文件</button>
+        </div>
+      </section>
+
+      <section class="panel two-col actions-panel shell-only">
+        <div>
+          <h2>快速发送文本</h2>
+          <p class="muted">
+            这里已经可以当作轻量采集入口使用。系统分享过来的文本也会优先预填到这里，再直接提交到现有 Rust API。
+          </p>
+          <textarea id="text-input" class="bundle-input compact-input" spellcheck="true" placeholder="输入或粘贴要发送到 Clip Relay 的文本"></textarea>
+          <div class="row">
+            <button id="send-text-button" class="primary-button" type="button" disabled>发送文本</button>
+          </div>
+        </div>
+
+        <div>
+          <h2>快速发送文件</h2>
+          <p class="muted">
+            相册、拍照、手动选文件，以及 Android 系统分享，都会统一走和网页端相同的上传接口。
+          </p>
+          <div class="drop-panel">
+            <div class="row">
+              <button id="pick-photos-button" class="primary-button" type="button" disabled>从相册选择</button>
+              <button id="take-photo-button" class="secondary-button" type="button" disabled>立即拍照</button>
+              <label class="primary-button file-button wide-button">
+                <input id="upload-files" type="file" multiple />
+                选择文件或图片
+              </label>
+            </div>
+            <p class="drop-hint">相册、相机和手动文件选择都会复用同一套设备凭证上传。</p>
+          </div>
+          <ul id="upload-list" class="upload-list empty-list">
+            <li>还没有上传记录。</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="panel shell-only">
+        <h2>当前阶段能力</h2>
+        <div class="checklist">
+          <div class="check-item done">接入包导入与本地持久化</div>
+          <div class="check-item done">直接对接现有 Rust API 的文本与文件上传</div>
+          <div class="check-item done">Android 系统分享元数据接入</div>
+          <div class="check-item done">将共享内容 URI 解析成可上传文件</div>
+          <div class="check-item done">拍照与相册快捷入口</div>
+          <div class="check-item done">带认证引导的内嵌 Clip Relay 主界面</div>
+          <div class="check-item pending">iPhone 分享扩展后续跟进</div>
+        </div>
+      </section>
+
+      <section class="panel log-panel shell-only">
+        <h2>状态</h2>
+        <pre id="status-log">准备就绪。</pre>
+      </section>
+    </main>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
