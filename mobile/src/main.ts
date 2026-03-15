@@ -1,3 +1,4 @@
+import { App as CapApp } from '@capacitor/app';
 import { Camera, CameraResultType, CameraSource, type GalleryPhoto, type Photo } from '@capacitor/camera';
 import { checkConnection, sendFiles, sendText } from './api';
 import { clearBundle, loadBundle, maskToken, parseBundle, saveBundle, type MobileConnectionBundle } from './bundle';
@@ -11,8 +12,10 @@ type UploadItem = {
 };
 
 type AppView = 'shell' | 'embedded';
+type ShellSection = 'home' | 'settings';
 
 const APP_VIEW_STORAGE_KEY = 'clip-relay-mobile.view';
+const SHELL_SECTION_STORAGE_KEY = 'clip-relay-mobile.section';
 const EMBEDDED_ACCESS_TOKEN_HASH_KEY = 'clipRelayAccessToken';
 const EMBEDDED_BOOT_NONCE_HASH_KEY = 'clipRelayBootNonce';
 
@@ -24,14 +27,14 @@ function requireElement<T extends Element>(selector: string): T {
   return node;
 }
 
-function getPreferredView(hasBundle: boolean): AppView {
+function getPreferredView(): AppView {
   try {
     const raw = window.localStorage.getItem(APP_VIEW_STORAGE_KEY);
     if (raw === 'shell' || raw === 'embedded') {
       return raw;
     }
   } catch {}
-  return hasBundle ? 'embedded' : 'shell';
+  return 'shell';
 }
 
 function persistPreferredView(view: AppView) {
@@ -40,8 +43,30 @@ function persistPreferredView(view: AppView) {
   } catch {}
 }
 
+function getPreferredShellSection(): ShellSection {
+  try {
+    const raw = window.localStorage.getItem(SHELL_SECTION_STORAGE_KEY);
+    if (raw === 'home' || raw === 'settings') {
+      return raw;
+    }
+  } catch {}
+  return 'home';
+}
+
+function persistPreferredShellSection(section: ShellSection) {
+  try {
+    window.localStorage.setItem(SHELL_SECTION_STORAGE_KEY, section);
+  } catch {}
+}
+
 const appShell = requireElement<HTMLElement>('#app-shell');
+const shellHome = requireElement<HTMLElement>('#shell-home');
+const shellSettings = requireElement<HTMLElement>('#shell-settings');
+const homeTabButton = requireElement<HTMLButtonElement>('#home-tab-button');
+const settingsTabButton = requireElement<HTMLButtonElement>('#settings-tab-button');
+const goSettingsButton = requireElement<HTMLButtonElement>('#go-settings-button');
 const onboardingCard = requireElement<HTMLElement>('#onboarding-card');
+const nativeShareSection = requireElement<HTMLElement>('#native-share-section');
 const embeddedShell = requireElement<HTMLElement>('#embedded-shell');
 const embeddedSummary = requireElement<HTMLDivElement>('#embedded-summary');
 const embeddedFrame = requireElement<HTMLIFrameElement>('#embedded-frame');
@@ -67,6 +92,7 @@ const checkConnectionButton = requireElement<HTMLButtonElement>('#check-connecti
 const openServerButton = requireElement<HTMLButtonElement>('#open-server-button');
 const clearButton = requireElement<HTMLButtonElement>('#clear-button');
 const bundleSummary = requireElement<HTMLDivElement>('#bundle-summary');
+const settingsBundleSummary = requireElement<HTMLDivElement>('#settings-bundle-summary');
 const nativeShareSummary = requireElement<HTMLDivElement>('#native-share-summary');
 const importNativeShareButton = requireElement<HTMLButtonElement>('#import-native-share-button');
 const textInput = requireElement<HTMLTextAreaElement>('#text-input');
@@ -76,14 +102,24 @@ const pickPhotosButton = requireElement<HTMLButtonElement>('#pick-photos-button'
 const takePhotoButton = requireElement<HTMLButtonElement>('#take-photo-button');
 const uploadList = requireElement<HTMLUListElement>('#upload-list');
 const statusLog = requireElement<HTMLPreElement>('#status-log');
+const quickShareOverlay = requireElement<HTMLElement>('#quick-share-overlay');
+const quickShareSpinner = requireElement<HTMLElement>('#quick-share-spinner');
+const quickShareIconSuccess = requireElement<HTMLElement>('#quick-share-icon-success');
+const quickShareIconError = requireElement<HTMLElement>('#quick-share-icon-error');
+const quickShareMessage = requireElement<HTMLParagraphElement>('#quick-share-message');
+const quickShareActions = requireElement<HTMLElement>('#quick-share-actions');
+const quickShareRetryButton = requireElement<HTMLButtonElement>('#quick-share-retry');
+const quickShareOpenAppButton = requireElement<HTMLButtonElement>('#quick-share-open-app');
 
 let pendingNativeShare: NativeSharePayload | null = null;
 let nativeShareImportInFlight = false;
 let nativeMediaActionInFlight = false;
 let currentView: AppView = 'shell';
+let currentShellSection: ShellSection = 'home';
 let embeddedLoadInFlight = false;
 let embeddedLoadTimeoutId: number | null = null;
 let embeddedBlockedReason: string | null = null;
+let lastQuickSharePayload: NativeSharePayload | null = null;
 
 function setStatus(message: string) {
   statusLog.textContent = `${new Date().toLocaleTimeString()} ${message}`;
@@ -110,6 +146,17 @@ function getEmbeddedLaunchIssue(bundle: MobileConnectionBundle): string | null {
 
 function getActiveBundle(): MobileConnectionBundle | null {
   return loadBundle();
+}
+
+function setShellSection(section: ShellSection) {
+  currentShellSection = section;
+  persistPreferredShellSection(section);
+  shellHome.classList.toggle('hidden', section !== 'home');
+  shellSettings.classList.toggle('hidden', section !== 'settings');
+  homeTabButton.classList.toggle('is-active', section === 'home');
+  settingsTabButton.classList.toggle('is-active', section === 'settings');
+  homeTabButton.setAttribute('aria-selected', String(section === 'home'));
+  settingsTabButton.setAttribute('aria-selected', String(section === 'settings'));
 }
 
 function setView(view: AppView) {
@@ -148,6 +195,30 @@ function syncActionState() {
 
 function renderOnboarding(bundle: MobileConnectionBundle | null) {
   onboardingCard.classList.toggle('hidden', Boolean(bundle));
+}
+
+function renderConnectionSummary(target: HTMLDivElement, bundle: MobileConnectionBundle | null, variant: ShellSection) {
+  if (!bundle) {
+    target.className = 'summary-card compact-card empty-state';
+    target.textContent = copy.shell.noBundleImported;
+    return;
+  }
+
+  const summaryFields =
+    variant === 'home'
+      ? [
+          field(copy.fields.serverUrl, bundle.serverUrl),
+          field(copy.fields.generatedAt, new Date(bundle.generatedAt).toLocaleString()),
+        ]
+      : [
+          field(copy.fields.serverUrl, bundle.serverUrl),
+          field(copy.fields.apiBase, bundle.apiBase),
+          field(copy.fields.deviceToken, maskToken(bundle.accessToken)),
+          field(copy.fields.generatedAt, new Date(bundle.generatedAt).toLocaleString()),
+        ];
+
+  target.className = variant === 'home' ? 'summary-card compact-card' : 'summary-card';
+  target.innerHTML = [`<span class="status-badge">${escapeHtml(copy.badges.configured)}</span>`, ...summaryFields].join('');
 }
 
 function renderShareImportButtons() {
@@ -201,21 +272,8 @@ function openBundleServer(bundle: MobileConnectionBundle) {
 
 function renderBundle(bundle: MobileConnectionBundle | null) {
   renderOnboarding(bundle);
-  if (!bundle) {
-    bundleSummary.className = 'summary-card empty-state';
-    bundleSummary.textContent = copy.shell.noBundleImported;
-    syncActionState();
-    return;
-  }
-
-  bundleSummary.className = 'summary-card';
-  bundleSummary.innerHTML = [
-    `<span class="status-badge">${escapeHtml(copy.badges.configured)}</span>`,
-    field(copy.fields.serverUrl, bundle.serverUrl),
-    field(copy.fields.apiBase, bundle.apiBase),
-    field(copy.fields.deviceToken, maskToken(bundle.accessToken)),
-    field(copy.fields.generatedAt, new Date(bundle.generatedAt).toLocaleString()),
-  ].join('');
+  renderConnectionSummary(bundleSummary, bundle, 'home');
+  renderConnectionSummary(settingsBundleSummary, bundle, 'settings');
   syncActionState();
 }
 
@@ -239,6 +297,7 @@ function renderEmbeddedSummary(bundle: MobileConnectionBundle | null, status: st
 
 function renderNativeShare(payload: NativeSharePayload | null) {
   pendingNativeShare = payload;
+  nativeShareSection.classList.toggle('hidden', !payload);
 
   if (!payload) {
     nativeShareSummary.className = 'summary-card empty-state compact-card';
@@ -377,8 +436,8 @@ function importRawBundle(raw: string) {
   renderBundle(bundle);
   renderEmbeddedSummary(bundle, copy.embedded.imported, copy.embedded.badge.ready);
   bundleInput.value = JSON.stringify(bundle, null, 2);
+  setShellSection('home');
   setStatus(copy.status.importedBundle(bundle.apiBase));
-  openEmbeddedView(true);
 }
 
 function decodeBase64(base64: string): Uint8Array {
@@ -589,19 +648,108 @@ async function handleCameraCapture() {
   }
 }
 
+type QuickShareState = 'uploading' | 'success' | 'error';
+
+function showQuickShareOverlay(state: QuickShareState, message: string) {
+  quickShareOverlay.classList.remove('hidden');
+  quickShareSpinner.classList.toggle('hidden', state !== 'uploading');
+  quickShareIconSuccess.classList.toggle('hidden', state !== 'success');
+  quickShareIconError.classList.toggle('hidden', state !== 'error');
+  quickShareMessage.textContent = message;
+  quickShareActions.classList.toggle('hidden', state !== 'error');
+}
+
+function hideQuickShareOverlay() {
+  quickShareOverlay.classList.add('hidden');
+}
+
+async function attemptQuickShare(payload: NativeSharePayload): Promise<boolean> {
+  const bundle = getActiveBundle();
+  if (!bundle) {
+    return false;
+  }
+
+  const hasFiles = Boolean(payload.uris?.length);
+  const hasText = Boolean(payload.text?.trim());
+
+  if (!hasFiles && !hasText) {
+    return false;
+  }
+
+  lastQuickSharePayload = payload;
+  const fileCount = payload.uris?.length ?? 0;
+  showQuickShareOverlay('uploading', hasFiles ? copy.quickShare.uploading(fileCount) : copy.quickShare.uploadingText);
+
+  try {
+    if (hasFiles) {
+      const result = await ShareReceiver.resolvePendingShareUris();
+      const files = result.files.map(createFileFromNativeShare);
+
+      if (!files.length) {
+        showQuickShareOverlay('error', copy.quickShare.noFiles);
+        return true;
+      }
+
+      let failedCount = 0;
+      for (const file of files) {
+        try {
+          await sendFiles(bundle, [file]);
+        } catch {
+          failedCount++;
+        }
+      }
+
+      if (failedCount > 0) {
+        showQuickShareOverlay('error', copy.quickShare.partialFailure(failedCount, files.length));
+        return true;
+      }
+    } else {
+      await sendText(bundle, payload.text!.trim());
+    }
+
+    await ShareReceiver.clearPendingShare().catch(() => undefined);
+    showQuickShareOverlay('success', hasFiles ? copy.quickShare.success(fileCount) : copy.quickShare.successText);
+
+    setTimeout(async () => {
+      try {
+        await CapApp.minimizeApp();
+      } catch {
+        hideQuickShareOverlay();
+      }
+    }, 1500);
+
+    return true;
+  } catch (error) {
+    showQuickShareOverlay('error', copy.quickShare.failed(error instanceof Error ? error.message : String(error)));
+    return true;
+  }
+}
+
 async function bootstrapNativeShare() {
   try {
     const existing = await ShareReceiver.getPendingShare();
     if (existing) {
-      renderNativeShare(existing);
-      const uriCount = existing.uris?.length ?? 0;
-      setStatus(copy.status.nativeShareDetected(uriCount));
+      const handled = await attemptQuickShare(existing);
+      if (!handled) {
+        renderNativeShare(existing);
+        if (currentView === 'shell') {
+          setShellSection('home');
+        }
+        const uriCount = existing.uris?.length ?? 0;
+        setStatus(copy.status.nativeShareDetected(uriCount));
+      }
     }
 
-    await ShareReceiver.addListener('shareReceived', (payload) => {
-      renderNativeShare(payload);
-      const uriCount = payload.uris?.length ?? 0;
-      setStatus(copy.status.nativeShareReceived(uriCount));
+    await ShareReceiver.addListener('shareReceived', async (payload) => {
+      const handled = await attemptQuickShare(payload);
+      if (!handled) {
+        renderNativeShare(payload);
+        if (currentView === 'shell') {
+          setShellSection('home');
+        }
+        const uriCount = payload.uris?.length ?? 0;
+        setStatus(copy.status.nativeShareReceived(uriCount));
+      }
     });
   } catch {
     renderNativeShare(null);
@@ -691,6 +839,18 @@ embeddedBackShellPanelButton.addEventListener('click', () => {
   closeEmbeddedView();
 });
 
+homeTabButton.addEventListener('click', () => {
+  setShellSection('home');
+});
+
+settingsTabButton.addEventListener('click', () => {
+  setShellSection('settings');
+});
+
+goSettingsButton.addEventListener('click', () => {
+  setShellSection('settings');
+});
+
 clearButton.addEventListener('click', () => {
   clearBundle();
   clearEmbeddedLoadTimeout();
@@ -698,6 +858,7 @@ clearButton.addEventListener('click', () => {
   embeddedLoadInFlight = false;
   renderEmbeddedFallback(null, null);
   setView('shell');
+  setShellSection('settings');
   renderBundle(null);
   renderEmbeddedSummary(null, '');
   renderUploadList([]);
@@ -797,16 +958,34 @@ embeddedBackShellDockButton.addEventListener('click', () => {
   closeEmbeddedView();
 });
 
+quickShareRetryButton.addEventListener('click', () => {
+  if (lastQuickSharePayload) {
+    void attemptQuickShare(lastQuickSharePayload);
+  }
+});
+
+quickShareOpenAppButton.addEventListener('click', () => {
+  hideQuickShareOverlay();
+  if (lastQuickSharePayload) {
+    renderNativeShare(lastQuickSharePayload);
+    if (currentView === 'shell') {
+      setShellSection('home');
+    }
+  }
+});
+
 applyEmbeddedFallbackCopy();
 
 const existing = loadBundle();
-currentView = getPreferredView(Boolean(existing));
+currentView = getPreferredView();
+currentShellSection = getPreferredShellSection();
 renderBundle(existing);
 renderNativeShare(null);
 renderShareImportButtons();
 renderUploadList([]);
 renderEmbeddedSummary(existing, existing ? copy.embedded.ready : '');
 renderEmbeddedFallback(existing, null);
+setShellSection(currentShellSection);
 setView(currentView);
 if (existing) {
   bundleInput.value = JSON.stringify(existing, null, 2);

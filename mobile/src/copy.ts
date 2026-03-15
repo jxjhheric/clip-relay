@@ -97,4 +97,13 @@ export const copy = {
     unableToReadCapturedMedia: (status: number) => `读取拍摄结果失败（${status}）。`,
     invalidServerUrl: '接入包中的服务器地址不是有效 URL。',
   },
+  quickShare: {
+    uploading: (count: number) => `正在上传 ${count} 个文件...`,
+    uploadingText: '正在发送文本...',
+    success: (count: number) => count === 1 ? '已上传到 Clip Relay' : `${count} 个文件已上传`,
+    successText: '已发送到 Clip Relay',
+    failed: (message: string) => `上传失败：${message}`,
+    noFiles: '没有找到可上传的文件。',
+    partialFailure: (failed: number, total: number) => `${total} 个文件中有 ${failed} 个上传失败。`,
+  },
 };
