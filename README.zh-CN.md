@@ -1,4 +1,4 @@
-# Clip Relay
+﻿# Clip Relay
 
 [English](README.md) | 简体中文
 
@@ -29,7 +29,7 @@ Clip Relay 是一个自托管的剪贴板应用，用于在设备间快速分享
 # 安装前端依赖
 npm install
 
-# 1) 构建静态前端到 .next-export/
+# 1) 构建静态前端到 out/
 npm run build
 
 # 2) 启动 Rust 服务（同时服务静态前端）
@@ -51,14 +51,18 @@ npm start
 ```
 CLIPBOARD_PASSWORD="change-me"
 # 可选：覆盖默认设置
-# STATIC_DIR="/app/.next-export"   # 静态前端目录
+# STATIC_DIR="/app/out"   # 静态前端目录
 # PORT=8087                         # 监听端口
 # AUTH_MAX_AGE_SECONDS=604800       # 认证 Cookie 有效期（秒），默认 7 天
+# DATA_DIR="/app/data"              # SQLite + uploads 所在目录（默认：自动检测）
+# HEALTH_VERBOSE=1                   # 在 /api/healthz 返回 dataDir/dbPath（便于排查）
 ```
 - `CLIPBOARD_PASSWORD` 为访问口令。
-- `STATIC_DIR` 可选；默认会自动探测 `.next-export/`、`out/` 等目录。
+- `STATIC_DIR` 可选；默认会优先自动探测 `out/`，并兼容旧的 `.next-export/` 目录。
 - `AUTH_MAX_AGE_SECONDS` 控制登录 Cookie 的有效期（秒）。默认 7 天，设置更短/更长可按需调整。
-- SQLite 位于 `./data/custom.db`（首次启动自动创建）。请确保挂载卷对容器用户可写。
+- SQLite 位于 `data/custom.db`（首次启动自动创建）。Docker 镜像默认设置 `DATA_DIR=/app/data`。
+  - 非 Docker 本地开发时，服务会自动检测数据目录（通常为项目根目录下的 `./data`）。
+  - 若自动检测的目录不可写，服务会在启动阶段直接报错退出；请设置 `DATA_DIR` 指向可写路径。
 
 ### 本地构建镜像
 ```bash
@@ -91,6 +95,15 @@ services:
 - 大文件：`data/uploads/`（启动时自动创建，API 流式读取）
 - 备份/迁移时请同时备份上述两处。
 
+### 可选：启用 S3（Litestream + uploads）
+当配置了 `S3_*` 环境变量时：
+- 数据库由 Litestream 实时复制到 S3（对象前缀：`database/main/`，见 `litestream.yml`）。
+- 大文件由应用直接上传到 S3（对象前缀：`uploads/`）。
+
+在新环境部署时：
+- 若本地数据库文件不存在，容器启动阶段会尝试从 S3 的 Litestream 副本恢复数据库。
+- 运行中也可以在 UI 的「设置」里点击「从云端同步数据库」触发恢复（会覆盖本地数据库，并重启服务以避免 Litestream WAL 同步冲突）。
+
 ## 使用提示与常见问题
 - 复制按钮与 HTTP 环境
   - 浏览器的剪贴板 API 需要“安全上下文”（HTTPS 或 localhost）。在 HTTP 环境下，系统复制可能受限。
@@ -109,3 +122,4 @@ rust-server/         # Rust (axum) API 服务（同时服务静态前端）
 
 ## 许可证
 MIT  - 请参阅 [LICENSE](LICENSE)
+

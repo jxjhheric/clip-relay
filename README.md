@@ -1,4 +1,4 @@
-# Clip Relay
+﻿# Clip Relay
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -35,7 +35,7 @@ npm install
 
 ### Local run (Rust server + static UI)
 ```bash
-# 1) Build static export to .next-export/
+# 1) Build static export to out/
 npm run build
 
 # 2) Start Rust API server (serves static UI too)
@@ -49,14 +49,27 @@ Create a `.env` file (minimum):
 ```
 CLIPBOARD_PASSWORD="change-me"
 # Optional: override defaults
-# STATIC_DIR="/app/.next-export"   # where static UI is served from
+# STATIC_DIR="/app/out"   # where static UI is served from
 # PORT=8087                         # server listen port
 # AUTH_MAX_AGE_SECONDS=604800       # auth cookie max-age in seconds (default: 7 days)
+# DATA_DIR="/app/data"              # directory containing SQLite + uploads (default: auto-detect)
+# HEALTH_VERBOSE=1                   # include dataDir/dbPath in /api/healthz
 ```
 - `CLIPBOARD_PASSWORD` controls access to the UI.
-- `STATIC_DIR` is optional; by default the server tries `.next-export/`, `out/`, or `../.next-export`.
+- `STATIC_DIR` is optional; by default the server tries `out/`, then legacy `.next-export/`, then parent-directory fallbacks.
 - `AUTH_MAX_AGE_SECONDS` controls cookie lifetime. Defaults to 7 days; tune longer/shorter as needed.
-- The SQLite database lives under `./data/custom.db` (auto-created). Ensure the mounted volume is writable by the container user.
+- The SQLite database lives under `data/custom.db` (auto-created). Docker images set `DATA_DIR=/app/data` by default.
+  - For non-Docker local development, the server auto-detects the data directory (usually `./data` relative to the project root).
+  - If the auto-detected directory is not writable, the server fails fast on startup; set `DATA_DIR` to point at a writable path.
+
+### Optional: Enable S3 (Litestream + uploads)
+When `S3_*` env vars are provided:
+- SQLite is replicated to S3 by Litestream (prefix: `database/main/`, see `litestream.yml`).
+- Large uploads are stored directly in S3 by the app (prefix: `uploads/`).
+
+On a fresh deployment:
+- If the local DB file is missing, the container attempts to restore it from the Litestream replica at startup.
+- You can also trigger a restore at runtime from the UI (Settings → "Sync DB from cloud"); this overwrites the local DB and restarts the service to avoid Litestream WAL sync conflicts.
 
 ## Docker
 The provided `Dockerfile` builds a slim Rust runtime image including the static Next export. First-time empty volumes are auto-initialized by the server.
@@ -100,7 +113,7 @@ services:
 
 Notes:
 - The working directory is `/app`. The server writes SQLite DB to `/app/data/custom.db` and uploads to `/app/data/uploads`.
-- The static UI is embedded at build time under `/app/.next-export`.
+- The static UI is embedded at build time under `/app/out`.
 
 #### First-time init note
 No manual step is needed. The app creates tables on first start when the SQLite file is empty.
@@ -125,3 +138,4 @@ rust-server/         # Rust (axum) API server (serves static UI)
 
 ## License
 MIT  - Please refer to [LICENSE](LICENSE)
+

@@ -4,13 +4,10 @@
 FROM node:20-alpine AS frontend
 WORKDIR /app
 
-# Install deps (prod only is fine for export)
 COPY package.json package-lock.json ./
-# Install build tools for native deps (e.g., sharp), then install deps
 RUN apk add --no-cache python3 make g++ \
  && npm ci
 
-# Copy sources needed for static export
 COPY next.config.ts ./
 COPY tsconfig.json ./
 COPY postcss.config.mjs ./
@@ -19,13 +16,11 @@ COPY components.json ./
 COPY public ./public
 COPY src ./src
 
-# Produce static export to .next-export
 ENV NODE_ENV=production
 RUN npm run build && rm -rf .next && npm cache clean --force
 
-# Precompress static assets (brotli only)
 COPY scripts ./scripts
-RUN node ./scripts/precompress.mjs /app/.next-export --write-br --no-gz
+RUN node ./scripts/precompress.mjs /app/out --write-br --no-gz
 
 ##############################
 # Rust build
@@ -33,15 +28,16 @@ RUN node ./scripts/precompress.mjs /app/.next-export --write-br --no-gz
 FROM rust:1-alpine AS rust-builder
 WORKDIR /app
 
-# Cache deps first
-COPY rust-server/Cargo.toml rust-server/Cargo.lock ./rust-server/
-RUN apk add --no-cache musl-dev build-base pkgconf \
- && mkdir -p rust-server/src && echo "fn main(){}" > rust-server/src/main.rs \
- && cargo build --manifest-path rust-server/Cargo.toml --release \
- && rm -rf rust-server/target/release/deps/clip_relay*
+# Install build dependencies (perl for ring crate, used by rustls)
+RUN apk add --no-cache musl-dev build-base perl
 
-# Build with sources
+# Copy root files
 COPY rust-server ./rust-server
+
+# We remove Cargo.lock to ensure a fresh, consistent build inside the container
+RUN rm -f rust-server/Cargo.lock
+
+# Build the real application
 RUN cargo build --manifest-path rust-server/Cargo.toml --release
 
 ##############################
@@ -50,21 +46,35 @@ RUN cargo build --manifest-path rust-server/Cargo.toml --release
 FROM alpine:3.20 AS runtime
 WORKDIR /app
 
+# Install ca-certificates and litestream
 RUN apk add --no-cache ca-certificates && update-ca-certificates
+ADD https://github.com/benbjohnson/litestream/releases/download/v0.5.8/litestream-0.5.8-linux-x86_64.tar.gz /tmp/litestream.tar.gz
+RUN tar -C /usr/local/bin -xzf /tmp/litestream.tar.gz \
+ && rm /tmp/litestream.tar.gz
 
-COPY --chown=0:0 --from=frontend /app/.next-export /app/.next-export
+COPY --chown=0:0 --from=frontend /app/out /app/out
 COPY --chown=0:0 --from=rust-builder /app/rust-server/target/release/clip-relay /usr/local/bin/clip-relay
 
-RUN chmod a+rx /usr/local/bin/clip-relay \
+# Copy litestream config
+COPY litestream.yml /etc/litestream.yml
+
+RUN chmod a+rx /usr/local/bin/clip-relay /usr/local/bin/litestream \
  && mkdir -p /app/data /app/data/uploads /app/logs /app/tmp \
  && chgrp -R 0 /app/data /app/logs /app/tmp \
- && chmod -R 2775 /app/data /app/logs /app/tmp
+ && chmod -R 0777 /app/data /app/logs \
+ && chmod 1777 /app/tmp
 
 ENV RUST_LOG=info \
-    STATIC_DIR=/app/.next-export \
+    STATIC_DIR=/app/out \
+    DATA_DIR=/app/data \
     PORT=8087 \
     HOME=/tmp
 
+VOLUME ["/app/data"]
+
 EXPOSE 8087
 
-CMD ["/bin/sh","-c","umask 0002 && exec /usr/local/bin/clip-relay"]
+# If S3 is configured, use Litestream to restore (only if DB does not exist) and then keep it replicated.
+# If a restore marker exists (created by the UI "sync from cloud" action), force-restore by removing the local DB first.
+# Otherwise, run the application with local-only storage.
+CMD ["/bin/sh","-c","set -e; umask 0002; if [ -n \"${S3_ENDPOINT:-}\" ] && [ -n \"${S3_BUCKET:-}\" ]; then if [ -f /app/data/.restore_from_cloud ]; then echo \"[entrypoint] restore marker found; forcing restore\"; rm -f /app/data/custom.db /app/data/custom.db-wal /app/data/custom.db-shm; rm -rf /app/data/.custom.db-litestream; litestream restore -config /etc/litestream.yml -if-replica-exists /app/data/custom.db; rm -f /app/data/.restore_from_cloud; else litestream restore -config /etc/litestream.yml -if-db-not-exists -if-replica-exists /app/data/custom.db; fi; exec litestream replicate -config /etc/litestream.yml -exec /usr/local/bin/clip-relay; else exec /usr/local/bin/clip-relay; fi"]

@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr, time::Duration};
+﻿use std::{env, net::SocketAddr, time::Duration};
 
 use axum::body::Body;
 use axum::http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
@@ -8,7 +8,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, Method, StatusCode, Uri},
     middleware::from_fn_with_state,
     response::sse::{Event, KeepAlive, Sse},
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Redirect, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -26,7 +26,7 @@ use std::path::{Path as StdPath, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
 use time::OffsetDateTime;
-use tokio::io::AsyncWriteExt;
+
 use tokio::{net::TcpListener, sync::broadcast, time as tokio_time};
 use tokio_util::io::ReaderStream;
 use tower_http::{
@@ -34,6 +34,96 @@ use tower_http::{
     trace::TraceLayer,
 };
 use uuid::Uuid;
+use aws_sdk_s3::Client as S3Client;
+use aws_sdk_s3::primitives::ByteStream;
+use bytes::Bytes;
+use async_trait::async_trait;
+
+#[async_trait]
+trait Storage: Send + Sync {
+    async fn put(&self, path: &str, data: Vec<u8>) -> anyhow::Result<()>;
+    async fn get(&self, path: &str) -> anyhow::Result<Bytes>;
+    async fn delete(&self, path: &str) -> anyhow::Result<()>;
+}
+
+struct LocalStorage {
+    data_dir: PathBuf,
+}
+
+#[async_trait]
+impl Storage for LocalStorage {
+    async fn put(&self, path: &str, data: Vec<u8>) -> anyhow::Result<()> {
+        let abs = self.data_dir.join(path);
+        if let Some(parent) = abs.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::write(abs, data).await.map_err(Into::into)
+    }
+    async fn get(&self, path: &str) -> anyhow::Result<Bytes> {
+        let abs = self.data_dir.join(path);
+        let data = tokio::fs::read(abs).await?;
+        Ok(Bytes::from(data))
+    }
+    async fn delete(&self, path: &str) -> anyhow::Result<()> {
+        let abs = self.data_dir.join(path);
+        if abs.exists() {
+            tokio::fs::remove_file(abs).await.map_err(Into::into)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+struct S3Storage {
+    client: S3Client,
+    bucket: String,
+    local_fallback: Arc<LocalStorage>,
+}
+
+#[async_trait]
+impl Storage for S3Storage {
+    async fn put(&self, path: &str, data: Vec<u8>) -> anyhow::Result<()> {
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(path)
+            .body(ByteStream::from(data))
+            .send()
+            .await?;
+        Ok(())
+    }
+    async fn get(&self, path: &str) -> anyhow::Result<Bytes> {
+        // Try S3 first
+        match self.client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(path)
+            .send()
+            .await
+        {
+            Ok(output) => {
+                let data = output.body.collect().await?.into_bytes();
+                Ok(data)
+            }
+            Err(_) => {
+                // Fallback to local
+                self.local_fallback.get(path).await
+            }
+        }
+    }
+    async fn delete(&self, path: &str) -> anyhow::Result<()> {
+        let _ = self.client
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(path)
+            .send()
+            .await;
+        // Also try local
+        let _ = self.local_fallback.delete(path).await;
+        Ok(())
+    }
+}
+
 
 #[derive(Clone)]
 struct AppState {
@@ -41,6 +131,8 @@ struct AppState {
     password: Option<String>,
     db: Arc<Mutex<Connection>>,
     data_dir: PathBuf,
+    db_path: PathBuf,
+    storage: Arc<dyn Storage>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -61,13 +153,44 @@ async fn main() -> anyhow::Result<()> {
 
     let (tx, _rx) = broadcast::channel::<ServerEvent>(1024);
     let password = env::var("CLIPBOARD_PASSWORD").ok();
-    let data_dir = ensure_data_dirs()?;
-    let db = init_db(&data_dir)?;
+    let (data_dir, db_path, storage_hint) = resolve_storage_paths()?;
+    tracing::info!(%storage_hint, data_dir=%data_dir.display(), db_path=%db_path.display(), "Storage initialized");
+    let db = init_db(&db_path)?;
+
+    // Storage initialization
+    let s3_enabled = env::var("S3_ENDPOINT").is_ok();
+    let storage: Arc<dyn Storage> = if s3_enabled {
+        let endpoint = env::var("S3_ENDPOINT").unwrap();
+        let bucket = env::var("S3_BUCKET").expect("S3_BUCKET must be set");
+        let region = env::var("S3_REGION").unwrap_or_else(|_| "auto".into());
+        
+        let config = aws_config::from_env()
+            .endpoint_url(endpoint)
+            .region(aws_sdk_s3::config::Region::new(region))
+            .load()
+            .await;
+        let client = aws_sdk_s3::Client::new(&config);
+        
+        Arc::new(S3Storage {
+            client,
+            bucket,
+            local_fallback: Arc::new(LocalStorage {
+                data_dir: data_dir.clone(),
+            }),
+        })
+    } else {
+        Arc::new(LocalStorage {
+            data_dir: data_dir.clone(),
+        })
+    };
+
     let state = AppState {
         tx,
         password,
         db: Arc::new(Mutex::new(db)),
         data_dir,
+        db_path,
+        storage,
     };
 
     let protected = Router::new()
@@ -85,6 +208,9 @@ async fn main() -> anyhow::Result<()> {
             get(get_item_share).put(update_item_share),
         )
         .route("/clipboard/reorder", post(reorder_clipboard))
+        .route("/admin/sync-from-cloud", post(sync_from_cloud))
+        .route("/auth/access-token", post(issue_access_token))
+        .route("/share-target", post(web_share_target))
         // Files
         .route("/files/:id", get(get_file))
         // Allow large multipart bodies (up to 210MB)
@@ -98,7 +224,7 @@ async fn main() -> anyhow::Result<()> {
 
     let api = Router::new().nest("/api", protected.merge(public));
 
-    // Static front-end serving (tries STATIC_DIR, then ./out, ./.next-export, ../out, ../.next-export)
+    // Static front-end serving (tries STATIC_DIR, then ./out, legacy ./.next-export, ../out, ../.next-export)
     let static_root = env::var("STATIC_DIR").map_or_else(
         |_| {
             let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -265,8 +391,19 @@ fn build_cors() -> CorsLayer {
     }
 }
 
-async fn health() -> impl IntoResponse {
-    Json(serde_json::json!({ "message": "Good!" }))
+async fn health(State(state): State<AppState>) -> impl IntoResponse {
+    let verbose = env::var("HEALTH_VERBOSE")
+        .ok()
+        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+    if verbose {
+        Json(serde_json::json!({
+            "message": "Good!",
+            "dataDir": state.data_dir.display().to_string(),
+            "dbPath": state.db_path.display().to_string()
+        }))
+    } else {
+        Json(serde_json::json!({ "message": "Good!" }))
+    }
 }
 
 fn accept_br(headers: &HeaderMap) -> bool {
@@ -563,6 +700,53 @@ struct VerifyBody {
     password: String,
 }
 
+fn access_token_ttl_seconds() -> i64 {
+    env::var("AUTH_TOKEN_MAX_AGE_SECONDS")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(7_776_000)
+}
+
+fn issue_access_token_for(expected: &str) -> (String, i64) {
+    let expires_at = OffsetDateTime::now_utc().unix_timestamp() + access_token_ttl_seconds();
+    let mut buf = [0u8; 18];
+    rand::thread_rng().fill_bytes(&mut buf);
+    let nonce = B64_URL_SAFE_NO_PAD.encode(buf);
+    let payload = format!("{expires_at}.{nonce}");
+    let mut hasher = Sha256::new();
+    hasher.update(expected.as_bytes());
+    hasher.update(b"|access-token|");
+    hasher.update(payload.as_bytes());
+    let signature = B64_URL_SAFE_NO_PAD.encode(hasher.finalize());
+    (format!("v1.{payload}.{signature}"), expires_at)
+}
+
+fn verify_access_token(candidate: &str, expected: &str) -> bool {
+    let parts: Vec<&str> = candidate.split('.').collect();
+    if parts.len() != 4 || parts[0] != "v1" {
+        return false;
+    }
+    let expires_at = match parts[1].parse::<i64>() {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    if expires_at <= OffsetDateTime::now_utc().unix_timestamp() {
+        return false;
+    }
+    let payload = format!("{}.{}", parts[1], parts[2]);
+    let mut hasher = Sha256::new();
+    hasher.update(expected.as_bytes());
+    hasher.update(b"|access-token|");
+    hasher.update(payload.as_bytes());
+    let signature = B64_URL_SAFE_NO_PAD.encode(hasher.finalize());
+    signature == parts[3]
+}
+
+fn matches_auth_credential(candidate: &str, expected: &str) -> bool {
+    candidate == expected || verify_access_token(candidate, expected)
+}
+
 async fn auth_verify(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -612,10 +796,36 @@ async fn auth_verify(
             ""
         }
     );
-    let mut res = Json(serde_json::json!({"success": true})).into_response();
+    let (access_token, access_token_expires_at) = issue_access_token_for(&expected);
+    let mut res = Json(serde_json::json!({
+        "success": true,
+        "accessToken": access_token,
+        "accessTokenExpiresAt": epoch_to_iso(access_token_expires_at),
+    }))
+    .into_response();
     res.headers_mut()
         .insert("set-cookie", HeaderValue::from_str(&cookie).unwrap());
     res
+}
+
+async fn issue_access_token(State(state): State<AppState>) -> Response {
+    let Some(expected) = state.password.as_ref() else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error":"Authentication not configured on server"})),
+        )
+            .into_response();
+    };
+    let (access_token, access_token_expires_at) = issue_access_token_for(expected);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "success": true,
+            "accessToken": access_token,
+            "accessTokenExpiresAt": epoch_to_iso(access_token_expires_at),
+        })),
+    )
+        .into_response()
 }
 
 async fn auth_logout(headers: HeaderMap) -> Response {
@@ -691,7 +901,7 @@ async fn auth_mw(
         .and_then(|v| v.to_str().ok())
     {
         if let Some(token) = auth.strip_prefix("Bearer ") {
-            if token == expected.as_str() {
+            if matches_auth_credential(token, expected.as_str()) {
                 ok = true;
             }
         }
@@ -721,7 +931,7 @@ async fn auth_mw(
         if allow_q {
             if let Some(q) = req.uri().query() {
                 for (k, v) in form_urlencoded::parse(q.as_bytes()) {
-                    if k == "auth" && v.as_ref() == expected.as_str() {
+                    if k == "auth" && matches_auth_credential(v.as_ref(), expected.as_str()) {
                         ok = true;
                         break;
                     }
@@ -824,8 +1034,44 @@ struct ClipboardItem {
     updated_at: String,
 }
 
-fn ensure_data_dirs() -> anyhow::Result<PathBuf> {
-    // Always prefer repository root's `data/` regardless of current working directory.
+fn resolve_storage_paths() -> anyhow::Result<(PathBuf, PathBuf, String)> {
+    // Optional override via DATA_DIR (set in Dockerfile for container deployments)
+    if let Ok(data_dir) = env::var("DATA_DIR") {
+        let data_dir = data_dir.trim();
+        if !data_dir.is_empty() {
+            let data_dir = PathBuf::from(data_dir);
+            let db_path = data_dir.join("custom.db");
+            ensure_writable_storage(&data_dir, Some(&db_path), Some("DATA_DIR"))?;
+            return Ok((data_dir, db_path, "explicit:DATA_DIR".to_string()));
+        }
+    }
+
+    // Auto-detect defaults, then fall back to known-writable locations.
+    let default_data_dir = default_data_dir()?;
+    let candidates: Vec<(PathBuf, &'static str)> = vec![
+        (default_data_dir, "auto:default"),
+        (PathBuf::from("/data"), "auto:/data"),
+    ];
+
+    let mut last_err: Option<anyhow::Error> = None;
+    for (dir, hint) in candidates {
+        let db_path = dir.join("custom.db");
+        match ensure_writable_storage(&dir, Some(&db_path), None) {
+            Ok(()) => {
+                if hint != "auto:default" {
+                    tracing::warn!(data_dir=%dir.display(), %hint, "Default data dir is not writable; falling back (data may be ephemeral unless you mount a volume)");
+                }
+                return Ok((dir, db_path, hint.to_string()));
+            }
+            Err(e) => last_err = Some(e),
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("No writable storage directory found")))
+}
+
+fn default_data_dir() -> anyhow::Result<PathBuf> {
+    // Prefer repository root's `data/` regardless of current working directory.
     // Detect repo root by finding an ancestor containing `rust-server/Cargo.toml`.
     let cwd = env::current_dir()?;
     let mut repo_root: Option<PathBuf> = None;
@@ -836,17 +1082,105 @@ fn ensure_data_dirs() -> anyhow::Result<PathBuf> {
             break;
         }
     }
-    let base = repo_root.unwrap_or(cwd);
-    let data_dir = base.join("data");
-    stdfs::create_dir_all(data_dir.join("uploads"))?;
-    Ok(data_dir)
+
+    if let Some(root) = repo_root {
+        return Ok(root.join("data"));
+    }
+
+    // Container-friendly default: prefer /app if present, otherwise use cwd.
+    let app_root = PathBuf::from("/app");
+    let base = if app_root.exists() { app_root } else { cwd };
+    Ok(base.join("data"))
 }
 
-fn init_db(data_dir: &StdPath) -> anyhow::Result<Connection> {
-    let db_path = data_dir.join("custom.db");
+
+
+fn ensure_writable_storage(
+    data_dir: &StdPath,
+    db_path: Option<&StdPath>,
+    configured_by: Option<&'static str>,
+) -> anyhow::Result<()> {
+    stdfs::create_dir_all(data_dir.join("uploads")).map_err(|e| {
+        if let Some(var) = configured_by {
+            anyhow::anyhow!(
+                "Failed to create storage directory (configured by {}): {} (data_dir={})",
+                var,
+                e,
+                data_dir.display()
+            )
+        } else {
+            anyhow::anyhow!("Failed to create storage directory: {} (data_dir={})", e, data_dir.display())
+        }
+    })?;
+
+    // Verify the directory is writable (SQLite needs to create journal/WAL files too).
+    let probe = data_dir.join(".write_probe");
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&probe)
+    {
+        Ok(_) => {
+            let _ = stdfs::remove_file(&probe);
+        }
+        Err(e) => {
+            if let Some(var) = configured_by {
+                return Err(anyhow::anyhow!(
+                    "Storage directory is not writable (configured by {}): {} (data_dir={})",
+                    var,
+                    e,
+                    data_dir.display()
+                ));
+            }
+            return Err(anyhow::anyhow!(
+                "Storage directory is not writable: {} (data_dir={})",
+                e,
+                data_dir.display()
+            ));
+        }
+    }
+
+    if let Some(db) = db_path {
+        let Some(parent) = db.parent() else {
+            return Err(anyhow::anyhow!("DB path must include a parent directory (db_path={})", db.display()));
+        };
+        // If DB lives outside data_dir, still ensure its directory is writable.
+        if parent != data_dir {
+            let probe = parent.join(".write_probe");
+            stdfs::create_dir_all(parent).map_err(|e| {
+                anyhow::anyhow!("Failed to create DB directory: {} (dir={})", e, parent.display())
+            })?;
+            std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(&probe)
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "DB directory is not writable: {} (dir={}, db_path={})",
+                        e,
+                        parent.display(),
+                        db.display()
+                    )
+                })?;
+            let _ = stdfs::remove_file(&probe);
+        }
+    }
+
+    Ok(())
+}
+
+fn init_db(db_path: &StdPath) -> anyhow::Result<Connection> {
     let conn = Connection::open(db_path)?;
     conn.execute_batch(
         r"
+        PRAGMA journal_mode = WAL;
+        -- Litestream expects to control checkpointing; disable SQLite's auto-checkpointing
+        -- to avoid WAL truncation/checkpoint races under load.
+        PRAGMA wal_autocheckpoint = 0;
+        -- Avoid transient database is locked errors when Litestream performs checkpoints.
+        PRAGMA busy_timeout = 5000;
         PRAGMA foreign_keys = ON;
         CREATE TABLE IF NOT EXISTS ClipboardItem (
           id TEXT PRIMARY KEY NOT NULL,
@@ -1020,150 +1354,117 @@ enum InType {
     File,
 }
 
-async fn create_clipboard(
-    State(state): State<AppState>,
-    mut multipart: Multipart,
-) -> impl IntoResponse {
-    const MAX_INLINE: usize = 256 * 1024;
-    let mut content: Option<String> = None;
-    let mut in_type: Option<InType> = None;
-    let mut file_name: Option<String> = None;
-    let mut content_type: Option<String> = None;
-    let mut file_size: Option<i64> = None;
-    let mut inline_data: Option<Vec<u8>> = None;
-    let mut file_path_rel: Option<String> = None;
-    // share params (unified flow: every item is a share)
-    let mut share_expires_in: Option<i64> = None; // seconds; None => default never expire
-    let mut share_max_downloads: Option<i64> = None;
-    let mut share_password: Option<String> = None;
-    while let Some(field) = multipart.next_field().await.unwrap_or(None) {
-        let name = field.name().map(|s| s.to_string());
-        match name.as_deref() {
-            Some("content") => {
-                content = Some(field.text().await.unwrap_or_default());
-            }
-            Some("type") => {
-                let v = field.text().await.unwrap_or_default();
-                in_type = match v.as_str() {
-                    "TEXT" => Some(InType::Text),
-                    "IMAGE" => Some(InType::Image),
-                    "FILE" => Some(InType::File),
-                    _ => None,
-                };
-            }
-            Some("file") => {
-                let fname = field.file_name().map(|s| s.to_string());
-                let ctype = field.content_type().map(|s| s.to_string());
-                file_name = fname;
-                content_type = ctype;
+const MAX_INLINE_UPLOAD: usize = 256 * 1024;
 
-                let mut total: usize = 0;
-                let mut buf: Vec<u8> = Vec::new();
-                let mut fh: Option<tokio::fs::File> = None;
-                let mut rel_path: Option<String> = None;
+#[derive(Default)]
+struct CreateClipboardPayload {
+    content: Option<String>,
+    in_type: Option<InType>,
+    file_name: Option<String>,
+    content_type: Option<String>,
+    file_size: Option<i64>,
+    inline_data: Option<Vec<u8>>,
+    file_path_rel: Option<String>,
+    share_expires_in: Option<i64>,
+    share_max_downloads: Option<i64>,
+    share_password: Option<String>,
+}
 
-                let mut field_stream = field;
-                while let Some(chunk) = field_stream.chunk().await.unwrap_or(None) {
-                    total += chunk.len();
+async fn persist_upload_blob(
+    state: &AppState,
+    file_name: Option<&str>,
+    full_data: Vec<u8>,
+) -> Result<(Option<i64>, Option<Vec<u8>>, Option<String>), Response> {
+    let total = full_data.len();
+    if total <= MAX_INLINE_UPLOAD {
+        return Ok((Some(total as i64), Some(full_data), None));
+    }
 
-                    if fh.is_none() && total <= MAX_INLINE {
-                        buf.extend_from_slice(&chunk);
-                    } else {
-                        if fh.is_none() {
-                            // Switch to file writing: decide filename and open handle
-                            let rand_id = Uuid::new_v4().to_string();
-                            let ext = file_name
-                                .as_ref()
-                                .and_then(|n| {
-                                    std::path::Path::new(n).extension().and_then(|s| s.to_str())
-                                })
-                                .unwrap_or("");
-                            let gen = if ext.is_empty() {
-                                rand_id
-                            } else {
-                                format!("{}.{ext}", rand_id)
-                            };
-                            let abs = state.data_dir.join("uploads").join(&gen);
-                            match tokio::fs::File::create(&abs).await {
-                                Ok(mut f) => {
-                                    if !buf.is_empty() {
-                                        if let Err(_e) = f.write_all(&buf).await {
-                                            return (
-                                                StatusCode::INTERNAL_SERVER_ERROR,
-                                                Json(serde_json::json!({"error":"write failed"})),
-                                            )
-                                                .into_response();
-                                        }
-                                    }
-                                    fh = Some(f);
-                                    rel_path = Some(format!("uploads/{}", gen));
-                                }
-                                Err(_e) => {
-                                    return (
-                                        StatusCode::INTERNAL_SERVER_ERROR,
-                                        Json(serde_json::json!({"error":"open failed"})),
-                                    )
-                                        .into_response();
-                                }
-                            }
-                        }
-                        if let Some(f) = fh.as_mut() {
-                            if let Err(_e) = f.write_all(&chunk).await {
-                                return (
-                                    StatusCode::INTERNAL_SERVER_ERROR,
-                                    Json(serde_json::json!({"error":"write failed"})),
-                                )
-                                    .into_response();
-                            }
-                        }
-                    }
-                }
+    let rand_id = Uuid::new_v4().to_string();
+    let ext = file_name
+        .and_then(|name| StdPath::new(name).extension().and_then(|s| s.to_str()))
+        .unwrap_or("");
+    let generated = if ext.is_empty() {
+        rand_id
+    } else {
+        format!("{}.{ext}", rand_id)
+    };
+    let rel = format!("uploads/{}", generated);
+    if let Err(e) = state.storage.put(&rel, full_data).await {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "upload failed", "detail": e.to_string()})),
+        )
+            .into_response());
+    }
+    Ok((Some(total as i64), None, Some(rel)))
+}
 
-                file_size = Some(total as i64);
-                if let Some(rp) = rel_path {
-                    file_path_rel = Some(rp);
-                    inline_data = None;
-                } else {
-                    inline_data = Some(buf);
-                }
+fn merge_share_target_text(title: Option<String>, text: Option<String>, url: Option<String>) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    for value in [title, text, url] {
+        if let Some(v) = value {
+            let trimmed = v.trim();
+            if !trimmed.is_empty() {
+                parts.push(trimmed.to_string());
             }
-            Some("shareExpiresIn") => {
-                // 0 or absent => never expire
-                let v = field.text().await.unwrap_or_default();
-                if let Ok(n) = v.parse::<i64>() {
-                    share_expires_in = Some(n.max(0));
-                }
-            }
-            Some("shareMaxDownloads") => {
-                let v = field.text().await.unwrap_or_default();
-                if let Ok(n) = v.parse::<i64>() {
-                    share_max_downloads = Some(n);
-                }
-            }
-            Some("sharePassword") => {
-                let v = field.text().await.unwrap_or_default();
-                if !v.trim().is_empty() {
-                    share_password = Some(v);
-                }
-            }
-            _ => {}
         }
     }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
+    }
+}
+
+async fn save_clipboard_item(
+    state: &AppState,
+    payload: CreateClipboardPayload,
+) -> Result<serde_json::Value, Response> {
+    let CreateClipboardPayload {
+        content,
+        in_type,
+        file_name,
+        file_size,
+        content_type,
+        inline_data,
+        file_path_rel,
+        share_expires_in,
+        share_max_downloads,
+        share_password,
+    } = payload;
+
     if content.is_none() && inline_data.is_none() && file_path_rel.is_none() {
-        return (
+        return Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error":"Content or file is required"})),
         )
-            .into_response();
+            .into_response());
     }
+
+    let inferred_type = in_type.unwrap_or_else(|| {
+        if inline_data.is_some() || file_path_rel.is_some() {
+            if content_type
+                .as_deref()
+                .map(|value| value.starts_with("image/"))
+                .unwrap_or(false)
+            {
+                InType::Image
+            } else {
+                InType::File
+            }
+        } else {
+            InType::Text
+        }
+    });
+
     let id = Uuid::new_v4().to_string();
-    let t = match in_type.unwrap_or(InType::Text) {
+    let t = match inferred_type {
         InType::Text => "TEXT",
         InType::Image => "IMAGE",
         InType::File => "FILE",
     };
     let now = now_unix();
-    // Assign new items the highest sortWeight so they always appear first
     let new_weight: i64 = {
         let conn = state.db.lock().unwrap();
         let max: i64 = conn
@@ -1178,11 +1479,11 @@ async fn create_clipboard(
             "INSERT INTO ClipboardItem (id,type,content,fileName,fileSize,sortWeight,contentType,inlineData,filePath,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?, ?, ?, ?, ?)",
             params![id, t, content, file_name, file_size, w, content_type, inline_data, file_path_rel, now, now]
         ) {
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":"db write failed","detail": e.to_string()}))).into_response();
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":"db write failed","detail": e.to_string()}))).into_response());
         }
         w
     };
-    // select minimal fields for broadcast/response
+
     let item = serde_json::json!({
         "id": id,
         "type": t,
@@ -1197,9 +1498,8 @@ async fn create_clipboard(
         name: "clipboard:created".into(),
         data: item.clone(),
     });
-    // Auto-create share for this item (never expire by default, unless provided)
+
     let (token, expires_at_abs, requires_password) = {
-        // token 18 random bytes -> base64url no pad
         let mut buf = [0u8; 18];
         rand::thread_rng().fill_bytes(&mut buf);
         let token = B64_URL_SAFE_NO_PAD.encode(buf);
@@ -1207,7 +1507,6 @@ async fn create_clipboard(
             Some(sec) if sec > 0 => Some(now + sec),
             _ => None,
         };
-        // password hash
         let password_hash: Option<String> = share_password.as_ref().and_then(|p| {
             if p.trim().is_empty() {
                 None
@@ -1236,7 +1535,6 @@ async fn create_clipboard(
         (token, expires_at_abs, share_password.is_some())
     };
 
-    // Build response: include share info
     let mut resp_obj = item.as_object().cloned().unwrap_or_default();
     let share_url = format!("/s/?token={}", token);
     resp_obj.insert(
@@ -1250,11 +1548,136 @@ async fn create_clipboard(
             "downloadCount": 0
         }),
     );
-    (
-        StatusCode::CREATED,
-        Json(serde_json::Value::Object(resp_obj)),
-    )
-        .into_response()
+    Ok(serde_json::Value::Object(resp_obj))
+}
+
+async fn create_clipboard(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    let mut payload = CreateClipboardPayload::default();
+    while let Some(field) = multipart.next_field().await.unwrap_or(None) {
+        let name = field.name().map(|s| s.to_string());
+        match name.as_deref() {
+            Some("content") => {
+                payload.content = Some(field.text().await.unwrap_or_default());
+            }
+            Some("type") => {
+                let v = field.text().await.unwrap_or_default();
+                payload.in_type = match v.as_str() {
+                    "TEXT" => Some(InType::Text),
+                    "IMAGE" => Some(InType::Image),
+                    "FILE" => Some(InType::File),
+                    _ => None,
+                };
+            }
+            Some("file") => {
+                let fname = field.file_name().map(|s| s.to_string());
+                let ctype = field.content_type().map(|s| s.to_string());
+                let mut full_data: Vec<u8> = Vec::new();
+                let mut field_stream = field;
+                while let Some(chunk) = field_stream.chunk().await.unwrap_or(None) {
+                    full_data.extend_from_slice(&chunk);
+                }
+                let (file_size, inline_data, file_path_rel) =
+                    match persist_upload_blob(&state, fname.as_deref(), full_data).await {
+                        Ok(result) => result,
+                        Err(resp) => return resp,
+                    };
+                payload.file_name = fname;
+                payload.content_type = ctype;
+                payload.file_size = file_size;
+                payload.inline_data = inline_data;
+                payload.file_path_rel = file_path_rel;
+            }
+            Some("shareExpiresIn") => {
+                let v = field.text().await.unwrap_or_default();
+                if let Ok(n) = v.parse::<i64>() {
+                    payload.share_expires_in = Some(n.max(0));
+                }
+            }
+            Some("shareMaxDownloads") => {
+                let v = field.text().await.unwrap_or_default();
+                if let Ok(n) = v.parse::<i64>() {
+                    payload.share_max_downloads = Some(n);
+                }
+            }
+            Some("sharePassword") => {
+                let v = field.text().await.unwrap_or_default();
+                if !v.trim().is_empty() {
+                    payload.share_password = Some(v);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    match save_clipboard_item(&state, payload).await {
+        Ok(body) => (StatusCode::CREATED, Json(body)).into_response(),
+        Err(resp) => resp,
+    }
+}
+
+async fn web_share_target(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    let mut title: Option<String> = None;
+    let mut text_value: Option<String> = None;
+    let mut url: Option<String> = None;
+    let mut file_name: Option<String> = None;
+    let mut content_type: Option<String> = None;
+    let mut file_bytes: Option<Vec<u8>> = None;
+
+    while let Some(field) = multipart.next_field().await.unwrap_or(None) {
+        let name = field.name().map(|s| s.to_string());
+        match name.as_deref() {
+            Some("title") => title = Some(field.text().await.unwrap_or_default()),
+            Some("text") => text_value = Some(field.text().await.unwrap_or_default()),
+            Some("url") => url = Some(field.text().await.unwrap_or_default()),
+            Some("files") if file_bytes.is_none() => {
+                file_name = field.file_name().map(|s| s.to_string());
+                content_type = field.content_type().map(|s| s.to_string());
+                let mut full_data: Vec<u8> = Vec::new();
+                let mut field_stream = field;
+                while let Some(chunk) = field_stream.chunk().await.unwrap_or(None) {
+                    full_data.extend_from_slice(&chunk);
+                }
+                file_bytes = Some(full_data);
+            }
+            _ => {}
+        }
+    }
+
+    let mut payload = CreateClipboardPayload::default();
+    payload.content = merge_share_target_text(title, text_value, url);
+
+    if let Some(bytes) = file_bytes {
+        let (file_size, inline_data, file_path_rel) =
+            match persist_upload_blob(&state, file_name.as_deref(), bytes).await {
+                Ok(result) => result,
+                Err(resp) => return resp,
+            };
+        payload.in_type = Some(if content_type
+            .as_deref()
+            .map(|value| value.starts_with("image/"))
+            .unwrap_or(false)
+        {
+            InType::Image
+        } else {
+            InType::File
+        });
+        payload.file_name = file_name;
+        payload.content_type = content_type;
+        payload.file_size = file_size;
+        payload.inline_data = inline_data;
+        payload.file_path_rel = file_path_rel;
+    }
+
+    match save_clipboard_item(&state, payload).await {
+        Ok(_) => Redirect::to("/?shared=1").into_response(),
+        Err(resp) => resp,
+    }
 }
 
 async fn get_clipboard(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
@@ -1360,8 +1783,7 @@ async fn delete_clipboard(
         fp
     };
     if let Some(rel) = file_path {
-        let abs = state.data_dir.join(rel);
-        let _ = stdfs::remove_file(abs);
+        let _ = state.storage.delete(&rel).await;
     }
     let _ = state.tx.send(ServerEvent {
         name: "clipboard:deleted".into(),
@@ -1428,34 +1850,81 @@ async fn get_file(
         HeaderValue::from_static("public, max-age=31536000, immutable"),
     );
     if let Some(rel) = file_path {
-        let abs = state.data_dir.join(rel);
-        if let Ok(meta) = tokio::fs::metadata(&abs).await {
-            headers.insert(
-                axum::http::header::CONTENT_LENGTH,
-                HeaderValue::from_str(&meta.len().to_string()).unwrap(),
-            );
-        }
-        match tokio::fs::File::open(&abs).await {
-            Ok(f) => {
-                let stream = ReaderStream::new(f);
-                let body = Body::from_stream(stream);
+        match state.storage.get(&rel).await {
+            Ok(data) => {
+                headers.insert(
+                    axum::http::header::CONTENT_LENGTH,
+                    HeaderValue::from_str(&data.len().to_string()).unwrap(),
+                );
+                let body = Body::from(data);
                 (StatusCode::OK, headers, body).into_response()
             }
             Err(_) => (
                 StatusCode::NOT_FOUND,
-                Json(serde_json::json!({"error":"missing"})),
-            )
-                .into_response(),
+                Json(serde_json::json!({"error": "not found"})),
+            ).into_response()
         }
-    } else if let Some(buf) = inline {
-        (StatusCode::OK, headers, buf).into_response()
+    } else if let Some(data) = inline {
+        headers.insert(
+            axum::http::header::CONTENT_LENGTH,
+            HeaderValue::from_str(&data.len().to_string()).unwrap(),
+        );
+        let body = Body::from(data);
+        (StatusCode::OK, headers, body).into_response()
     } else {
         (
             StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error":"missing content"})),
-        )
-            .into_response()
+            Json(serde_json::json!({"error": "not found"})),
+        ).into_response()
     }
+}
+
+async fn sync_from_cloud(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    // Restoring a SQLite database while Litestream is actively replicating it is unsafe:
+    // Litestream tails the WAL file and will error if the DB/WAL is swapped underneath it.
+    //
+    // Instead, we request a restart-based restore:
+    // 1) Write a marker file under DATA_DIR (persistent volume).
+    // 2) Exit the process so the supervisor restarts the container.
+    // 3) The container startup script sees the marker, restores from the replica, and then starts replication.
+
+    if env::var("S3_ENDPOINT").is_err() || env::var("S3_BUCKET").is_err() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "S3 is not configured (missing S3_ENDPOINT/S3_BUCKET)"
+            })),
+        )
+            .into_response();
+    }
+
+    let now = OffsetDateTime::now_utc().unix_timestamp();
+    let marker_path = state.data_dir.join(".restore_from_cloud");
+    if let Err(e) = tokio::fs::write(&marker_path, format!("requested_at={now}\n")).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error":"failed to write restore marker","detail": e.to_string()})),
+        )
+            .into_response();
+    }
+
+    // Give the HTTP response a moment to flush before we exit.
+    tokio::spawn(async {
+        tokio_time::sleep(Duration::from_millis(500)).await;
+        std::process::exit(0);
+    });
+
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({
+            "success": true,
+            "restart": true,
+            "marker": marker_path.display().to_string(),
+        })),
+    )
+        .into_response()
 }
 
 // -------------------- Share Handlers --------------------
@@ -2272,3 +2741,4 @@ async fn share_download_inner(
     )
         .into_response()
 }
+

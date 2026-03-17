@@ -2,7 +2,7 @@ version: "3.9"
 
 # Quick-start Compose for Clip Relay
 # 1) Copy this file to your server (e.g., /srv/clip-relay/compose.yml)
-# 2) Create .env alongside with DATABASE_URL and CLIPBOARD_PASSWORD
+# 2) Create .env alongside with CLIPBOARD_PASSWORD (optional: DATA_DIR)
 # 3) Choose the image tag: prefer sha-<commit> for reproducible deploys
 
 services:
@@ -16,14 +16,26 @@ services:
     ports:
       - "8087:8087"   # container listens on 8087 by default
     env_file: .env      # should contain CLIPBOARD_PASSWORD
-    # Optionally override port:
+    # Optionally override port / enable S3:
     # environment:
     #   - PORT=8087
+    #   - S3_BUCKET=clip-relay
+    #   - S3_ENDPOINT=https://<your-s3-endpoint>
+    #   - S3_REGION=auto
+    #   - AWS_ACCESS_KEY_ID=<your-access-key>
+    #   - AWS_SECRET_ACCESS_KEY=<your-secret-key>
     volumes:
       - ./data:/app/data
     restart: unless-stopped
     pull_policy: always
 
 # .env example:
-# DATABASE_URL="file:../data/custom.db"
 # CLIPBOARD_PASSWORD="change-me"
+# Optional (S3):
+# S3_BUCKET=clip-relay
+# S3_ENDPOINT=https://<your-s3-endpoint>
+# S3_REGION=auto
+# AWS_ACCESS_KEY_ID=<your-access-key>
+# AWS_SECRET_ACCESS_KEY=<your-secret-key>
+# Optional storage override:
+# DATA_DIR="/app/data"
